@@ -9,6 +9,10 @@ Downloads two archives from GitHub Releases:
 
 Both archives are extracted into {data_dir}/backends/cuda/ which forms the
 complete PyInstaller --onedir directory structure that torch expects.
+Downloaded archives are cached directly in {data_dir}/backends/cuda/ as:
+  - .download-CUDA-server.tmp
+  - .download-CUDA-libraries.tmp
+If these files already exist and pass SHA-256 verification, they are reused.
 """
 
 import asyncio
@@ -135,6 +139,18 @@ def _needs_cuda_libs_download() -> bool:
     return installed != CUDA_LIBS_VERSION
 
 
+def _sha256_file(path: Path) -> str:
+    """Compute SHA-256 hash for a file."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 async def _download_and_extract_archive(
     client,
     url: str,
@@ -157,11 +173,8 @@ async def _download_and_extract_archive(
         total_size: Total bytes across all downloads (for progress bar)
     """
     progress = get_progress_manager()
-    temp_path = dest_dir / f".download-{label.replace(' ', '-')}.tmp"
-
-    # Clean up leftover partial download
-    if temp_path.exists():
-        temp_path.unlink()
+    cache_path = dest_dir / f".download-{label.replace(' ', '-')}.tmp"
+    temp_path = cache_path.with_suffix(cache_path.suffix + ".part")
 
     # Fetch expected checksum (fail-fast: never extract an unverified archive)
     expected_sha = None
@@ -174,45 +187,79 @@ async def _download_and_extract_archive(
         except Exception as e:
             raise RuntimeError(f"{label}: failed to fetch checksum from {sha256_url}") from e
 
-    # Stream download, verify, and extract — always clean up temp file
+    # Prefer cache when available and valid; otherwise stream download into cache.
     downloaded = 0
-    try:
-        async with client.stream("GET", url) as response:
-            response.raise_for_status()
-            with open(temp_path, "wb") as f:
-                async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    progress.update_progress(
-                        PROGRESS_KEY,
-                        current=progress_offset + downloaded,
-                        total=total_size,
-                        filename=f"Downloading {label}",
-                        status="downloading",
-                    )
-
-        # Verify integrity
+    archive_path = cache_path
+    if cache_path.exists():
+        downloaded = cache_path.stat().st_size
         if expected_sha:
             progress.update_progress(
                 PROGRESS_KEY,
-                current=progress_offset + downloaded,
+                current=progress_offset,
                 total=total_size,
-                filename=f"Verifying {label}...",
+                filename=f"Verifying cached {label} archive...",
                 status="downloading",
             )
-            sha256 = hashlib.sha256()
-            with open(temp_path, "rb") as f:
-                while True:
-                    data = f.read(1024 * 1024)
-                    if not data:
-                        break
-                    sha256.update(data)
-            actual = sha256.hexdigest()
-            if actual != expected_sha:
-                raise ValueError(
-                    f"{label} integrity check failed: expected {expected_sha[:16]}..., got {actual[:16]}..."
+            actual = _sha256_file(cache_path)
+            if actual == expected_sha:
+                progress.update_progress(
+                    PROGRESS_KEY,
+                    current=progress_offset + downloaded,
+                    total=total_size,
+                    filename=f"Using cached {label} archive",
+                    status="downloading",
                 )
-            logger.info(f"{label}: integrity verified")
+                logger.info("%s: using cached archive %s", label, cache_path)
+            else:
+                logger.warning(
+                    "%s: cached archive checksum mismatch, re-downloading (%s != %s)",
+                    label,
+                    actual[:16],
+                    expected_sha[:16],
+                )
+                cache_path.unlink(missing_ok=True)
+                downloaded = 0
+
+    # Stream download, verify, and cache when needed
+    try:
+        if not cache_path.exists():
+            # Clean up leftover partial download
+            if temp_path.exists():
+                temp_path.unlink()
+
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                with open(temp_path, "wb") as f:
+                    async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        progress.update_progress(
+                            PROGRESS_KEY,
+                            current=progress_offset + downloaded,
+                            total=total_size,
+                            filename=f"Downloading {label}",
+                            status="downloading",
+                        )
+
+            # Verify integrity
+            if expected_sha:
+                progress.update_progress(
+                    PROGRESS_KEY,
+                    current=progress_offset + downloaded,
+                    total=total_size,
+                    filename=f"Verifying {label}...",
+                    status="downloading",
+                )
+                actual = _sha256_file(temp_path)
+                if actual != expected_sha:
+                    raise ValueError(
+                        f"{label} integrity check failed: expected {expected_sha[:16]}..., got {actual[:16]}..."
+                    )
+                logger.info("%s: integrity verified", label)
+
+            temp_path.replace(cache_path)
+            archive_path = cache_path
+            logger.info("%s: cached archive saved at %s", label, cache_path)
 
         # Extract (use data filter for path traversal protection on Python 3.12+)
         progress.update_progress(
@@ -222,7 +269,7 @@ async def _download_and_extract_archive(
             filename=f"Extracting {label}...",
             status="downloading",
         )
-        with tarfile.open(temp_path, "r:gz") as tar:
+        with tarfile.open(archive_path, "r:gz") as tar:
             if sys.version_info >= (3, 12):
                 tar.extractall(path=dest_dir, filter="data")
             else:
@@ -232,6 +279,8 @@ async def _download_and_extract_archive(
     finally:
         if temp_path.exists():
             temp_path.unlink()
+    if downloaded == 0 and archive_path.exists():
+        downloaded = archive_path.stat().st_size
     return downloaded
 
 

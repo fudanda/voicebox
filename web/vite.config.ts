@@ -5,6 +5,9 @@ import { defineConfig } from 'vite';
 import { changelogPlugin } from '../app/plugins/changelog';
 
 export default defineConfig({
+  server: {
+    host: '0.0.0.0',
+  },
   plugins: [react(), tailwindcss(), changelogPlugin(path.resolve(__dirname, '..'))],
   resolve: {
     alias: {

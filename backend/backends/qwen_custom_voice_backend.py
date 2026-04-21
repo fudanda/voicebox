@@ -16,6 +16,7 @@ Languages supported: zh, en, ja, ko, de, fr, ru, pt, es, it
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -105,16 +106,43 @@ class QwenCustomVoiceBackend:
             model_path = self._get_model_path(model_size)
             logger.info("Loading Qwen CustomVoice %s on %s...", model_size, self.device)
 
-            with force_offline_if_cached(is_cached, model_name):
+            from huggingface_hub import constants as hf_constants
+            from huggingface_hub import snapshot_download
+
+            cache_dir = hf_constants.HF_HUB_CACHE
+            load_source = model_path
+
+            # qwen_tts calls AutoProcessor.from_pretrained(..., fix_mistral_regex=True).
+            # Resolve a local snapshot for cached models so transformers treats the
+            # source as local and skips Hub metadata HTTP calls.
+            if is_cached:
+                try:
+                    load_source = snapshot_download(
+                        repo_id=model_path,
+                        cache_dir=cache_dir,
+                        local_files_only=True,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to resolve cached snapshot for %s; falling back to repo ID load",
+                        model_path,
+                        exc_info=True,
+                    )
+
+            use_offline_guard = is_cached and Path(load_source).is_dir()
+
+            with force_offline_if_cached(use_offline_guard, model_name):
                 if self.device == "cpu":
                     self.model = Qwen3TTSModel.from_pretrained(
-                        model_path,
+                        load_source,
+                        cache_dir=cache_dir,
                         torch_dtype=torch.float32,
                         low_cpu_mem_usage=False,
                     )
                 else:
                     self.model = Qwen3TTSModel.from_pretrained(
-                        model_path,
+                        load_source,
+                        cache_dir=cache_dir,
                         device_map=self.device,
                         torch_dtype=torch.bfloat16,
                     )

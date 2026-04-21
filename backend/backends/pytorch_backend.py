@@ -2,6 +2,7 @@
 PyTorch backend implementation for TTS and STT.
 """
 
+from pathlib import Path
 from typing import Optional, List, Tuple
 import asyncio
 import logging
@@ -104,19 +105,41 @@ class PyTorchTTSBackend:
             # .hf-cache/hub and .hf-cache/transformers, causing speech_tokenizer
             # and preprocessor_config.json to fail to resolve during load.
             from huggingface_hub import constants as hf_constants
+            from huggingface_hub import snapshot_download
             tts_cache_dir = hf_constants.HF_HUB_CACHE
+            load_source = model_path
 
-            with force_offline_if_cached(is_cached, model_name):
+            # qwen_tts always calls AutoProcessor.from_pretrained(..., fix_mistral_regex=True),
+            # which probes Hub model metadata for non-local model IDs. When the model is
+            # already cached, resolve a local snapshot path so transformers treats it as local
+            # and avoids metadata HTTP calls.
+            if is_cached:
+                try:
+                    load_source = snapshot_download(
+                        repo_id=model_path,
+                        cache_dir=tts_cache_dir,
+                        local_files_only=True,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to resolve cached snapshot for %s; falling back to repo ID load",
+                        model_path,
+                        exc_info=True,
+                    )
+
+            use_offline_guard = is_cached and Path(load_source).is_dir()
+
+            with force_offline_if_cached(use_offline_guard, model_name):
                 if self.device == "cpu":
                     self.model = Qwen3TTSModel.from_pretrained(
-                        model_path,
+                        load_source,
                         cache_dir=tts_cache_dir,
                         torch_dtype=torch.float32,
                         low_cpu_mem_usage=False,
                     )
                 else:
                     self.model = Qwen3TTSModel.from_pretrained(
-                        model_path,
+                        load_source,
                         cache_dir=tts_cache_dir,
                         device_map=self.device,
                         torch_dtype=torch.bfloat16,

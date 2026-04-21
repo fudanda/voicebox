@@ -61,19 +61,19 @@ fn find_voicebox_pid_on_port(port: u16) -> Option<u32> {
 /// must be present as booleans. This prevents misidentifying an unrelated
 /// service that happens to expose a `/health` endpoint.
 #[allow(dead_code)] // Used in platform-specific cfg blocks
-fn check_health(port: u16) -> bool {
+async fn check_health(port: u16) -> bool {
     let url = format!("http://127.0.0.1:{}/health", port);
-    match reqwest::blocking::Client::builder()
+    match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()
     {
-        Ok(client) => match client.get(&url).send() {
+        Ok(client) => match client.get(&url).send().await {
             Ok(resp) => {
                 if !resp.status().is_success() {
                     return false;
                 }
                 // Parse as JSON and validate Voicebox-specific fields
-                match resp.json::<serde_json::Value>() {
+                match resp.json::<serde_json::Value>().await {
                     Ok(body) => {
                         body.get("status").and_then(|v| v.as_str()) == Some("healthy")
                             && body.get("model_loaded").map(|v| v.is_boolean()).unwrap_or(false)
@@ -141,7 +141,7 @@ async fn start_server(
                         // Process name doesn't contain "voicebox" — could be an external
                         // Python/uvicorn/Docker server. Verify via HTTP health check.
                         println!("Port {} in use by '{}' (PID: {}), checking if it's a Voicebox server...", SERVER_PORT, command, pid_str);
-                        if check_health(SERVER_PORT) {
+                        if check_health(SERVER_PORT).await {
                             println!("Health check passed — reusing external server on port {}", SERVER_PORT);
                             return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
                         }
@@ -173,7 +173,7 @@ async fn start_server(
             // Process name doesn't match — could be an external Python/Docker server.
             // Verify via HTTP health check before giving up.
             println!("Port {} in use by unknown process, checking if it's a Voicebox server...", SERVER_PORT);
-            if check_health(SERVER_PORT) {
+            if check_health(SERVER_PORT).await {
                 println!("Health check passed — reusing external server on port {}", SERVER_PORT);
                 return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
             }
@@ -615,14 +615,17 @@ async fn stop_server(state: State<'_, ServerState>) -> Result<(), String> {
             // Send graceful shutdown via HTTP — the server's parent-pid watchdog
             // will also handle cleanup if this app process exits.
             println!("Sending graceful shutdown via HTTP...");
-            let client = reqwest::blocking::Client::builder()
+            if let Ok(client) = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(2))
                 .build()
-                .unwrap();
-
-            let _ = client
-                .post(&format!("http://127.0.0.1:{}/shutdown", SERVER_PORT))
-                .send();
+            {
+                let _ = client
+                    .post(format!("http://127.0.0.1:{}/shutdown", SERVER_PORT))
+                    .send()
+                    .await;
+            } else {
+                eprintln!("Failed to construct HTTP client for shutdown request");
+            }
 
             println!("Shutdown request sent (server watchdog will handle cleanup)");
         }
@@ -876,17 +879,21 @@ pub fn run() {
                             println!("Wrote keep-running sentinel to {:?}", sentinel);
                         }
 
-                        let client = reqwest::blocking::Client::builder()
-                            .timeout(std::time::Duration::from_secs(2))
-                            .build()
-                            .unwrap();
-                        match client
-                            .post(&format!("http://127.0.0.1:{}/watchdog/disable", SERVER_PORT))
-                            .send()
-                        {
-                            Ok(resp) => println!("Watchdog disable response: {}", resp.status()),
-                            Err(e) => eprintln!("Failed to disable watchdog: {}", e),
-                        }
+                        std::thread::spawn(|| {
+                            let client = reqwest::blocking::Client::builder()
+                                .timeout(std::time::Duration::from_secs(2))
+                                .build();
+                            match client {
+                                Ok(client) => match client
+                                    .post(format!("http://127.0.0.1:{}/watchdog/disable", SERVER_PORT))
+                                    .send()
+                                {
+                                    Ok(resp) => println!("Watchdog disable response: {}", resp.status()),
+                                    Err(e) => eprintln!("Failed to disable watchdog: {}", e),
+                                },
+                                Err(e) => eprintln!("Failed to build watchdog disable client: {}", e),
+                            }
+                        });
                     } else {
                         // Server will self-terminate via parent-pid watchdog when
                         // this process exits. On Unix, also send SIGTERM for
