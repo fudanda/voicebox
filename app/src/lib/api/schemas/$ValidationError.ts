@@ -3,29 +3,37 @@
 /* tslint:disable */
 /* eslint-disable */
 export const $ValidationError = {
-  properties: {
-    loc: {
-      type: 'array',
-      contains: {
-        type: 'any-of',
-        contains: [
-          {
+    properties: {
+        loc: {
+            type: 'array',
+            contains: {
+                type: 'any-of',
+                contains: [{
+                    type: 'string',
+                }, {
+                    type: 'number',
+                }],
+            },
+            isRequired: true,
+        },
+        msg: {
             type: 'string',
-          },
-          {
-            type: 'number',
-          },
-        ],
-      },
-      isRequired: true,
+            isRequired: true,
+        },
+        type: {
+            type: 'string',
+            isRequired: true,
+        },
+        input: {
+            properties: {
+            },
+        },
+        ctx: {
+            type: 'dictionary',
+            contains: {
+                properties: {
+                },
+            },
+        },
     },
-    msg: {
-      type: 'string',
-      isRequired: true,
-    },
-    type: {
-      type: 'string',
-      isRequired: true,
-    },
-  },
 } as const;

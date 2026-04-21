@@ -334,8 +334,11 @@ generate-api:
     ./scripts/generate-api.sh
 
 [windows]
-generate-api:
-    bash scripts/generate-api.sh
+generate-api: _ensure-venv
+    $ErrorActionPreference = "Stop"; \
+    & "{{ python }}" -c "import json; from pathlib import Path; from backend.app import create_app; Path('app/openapi.json').write_text(json.dumps(create_app().openapi(), ensure_ascii=False, indent=2), encoding='utf-8')"; \
+    Push-Location "{{ app_dir }}"; \
+    try { bunx --bun openapi-typescript-codegen --input openapi.json --output src/lib/api --client fetch --useOptions --exportSchemas true } finally { Pop-Location }
 
 # Open API docs in browser
 [unix]

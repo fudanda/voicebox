@@ -31,6 +31,7 @@ import type {
   StoryItemVersionUpdate,
   StoryResponse,
   TranscriptionResponse,
+  TranscriptionSubtitlesResponse,
   VoiceProfileCreate,
   VoiceProfileResponse,
   WhisperModelSize,
@@ -370,6 +371,93 @@ class ApiClient {
       method: 'POST',
       body: formData,
     });
+
+    if (response.status === 202) {
+      const pending = await response.json().catch(() => ({
+        detail: response.statusText,
+      }));
+      const detail = (pending as { detail?: unknown }).detail ?? pending;
+      const error = new Error(
+        formatErrorDetail(
+          detail,
+          'Whisper model is downloading. Please wait and try again.',
+        ),
+      ) as Error & { downloading?: boolean; modelName?: string };
+      error.downloading = true;
+      if (detail && typeof detail === 'object') {
+        const maybeModel = (detail as Record<string, unknown>).model_name;
+        if (typeof maybeModel === 'string') {
+          error.modelName = maybeModel;
+        }
+      }
+      throw error;
+    }
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({
+        detail: response.statusText,
+      }));
+      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+    }
+
+    return response.json();
+  }
+
+  async transcribeSubtitles({
+    file,
+    sampleId,
+    language,
+    model,
+  }: {
+    file?: File;
+    sampleId?: string;
+    language?: LanguageCode;
+    model?: WhisperModelSize;
+  }): Promise<TranscriptionSubtitlesResponse> {
+    if ((!file && !sampleId) || (file && sampleId)) {
+      throw new Error('Exactly one of file or sampleId must be provided.');
+    }
+
+    const formData = new FormData();
+    if (file) {
+      formData.append('file', file);
+    }
+    if (sampleId) {
+      formData.append('sample_id', sampleId);
+    }
+    if (language) {
+      formData.append('language', language);
+    }
+    if (model) {
+      formData.append('model', model);
+    }
+
+    const url = `${this.getBaseUrl()}/transcribe/subtitles`;
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (response.status === 202) {
+      const pending = await response.json().catch(() => ({
+        detail: response.statusText,
+      }));
+      const detail = (pending as { detail?: unknown }).detail ?? pending;
+      const error = new Error(
+        formatErrorDetail(
+          detail,
+          'Whisper model is downloading. Please wait and try again.',
+        ),
+      ) as Error & { downloading?: boolean; modelName?: string };
+      error.downloading = true;
+      if (detail && typeof detail === 'object') {
+        const maybeModel = (detail as Record<string, unknown>).model_name;
+        if (typeof maybeModel === 'string') {
+          error.modelName = maybeModel;
+        }
+      }
+      throw error;
+    }
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({

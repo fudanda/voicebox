@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export type Body_add_profile_sample_profiles__profile_id__samples_post = {
-  file: Blob;
-  reference_text: string;
+    file: string;
+    reference_text: string;
 };
+

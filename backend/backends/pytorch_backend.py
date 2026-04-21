@@ -11,7 +11,14 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-from . import TTSBackend, STTBackend, LANGUAGE_CODE_TO_NAME, WHISPER_HF_REPOS
+from . import (
+    TTSBackend,
+    STTBackend,
+    DetailedTranscription,
+    LANGUAGE_CODE_TO_NAME,
+    TranscriptionSegment,
+    WHISPER_HF_REPOS,
+)
 from .base import (
     is_model_cached,
     get_torch_device,
@@ -346,6 +353,48 @@ class PyTorchSTTBackend:
 
             logger.info("Whisper model unloaded")
 
+    @staticmethod
+    def _parse_offset_segment(offset: object, index: int) -> TranscriptionSegment | None:
+        """Convert a Whisper decode offset payload into a normalized segment."""
+        if not isinstance(offset, dict):
+            return None
+
+        raw_timestamp = offset.get("timestamp")
+        if not isinstance(raw_timestamp, (tuple, list)) or len(raw_timestamp) != 2:
+            return None
+
+        start, end = raw_timestamp
+        if start is None or end is None:
+            return None
+
+        text = str(offset.get("text", "")).strip()
+        if not text:
+            return None
+
+        return {
+            "index": index,
+            "start": float(start),
+            "end": float(end),
+            "text": text,
+        }
+
+    def _get_generate_kwargs(self, language: Optional[str], include_timestamps: bool) -> dict:
+        """Build Whisper generation kwargs shared by text and subtitle paths."""
+        generate_kwargs = {}
+
+        # If language is provided, force it; otherwise let Whisper auto-detect.
+        if language:
+            forced_decoder_ids = self.processor.get_decoder_prompt_ids(
+                language=language,
+                task="transcribe",
+            )
+            generate_kwargs["forced_decoder_ids"] = forced_decoder_ids
+
+        if include_timestamps:
+            generate_kwargs["return_timestamps"] = True
+
+        return generate_kwargs
+
     async def transcribe(
         self,
         audio_path: str,
@@ -384,15 +433,7 @@ class PyTorchSTTBackend:
                 )
                 inputs = inputs.to(self.device)
 
-                # Generate transcription
-                # If language is provided, force it; otherwise let Whisper auto-detect
-                generate_kwargs = {}
-                if language:
-                    forced_decoder_ids = self.processor.get_decoder_prompt_ids(
-                        language=language,
-                        task="transcribe",
-                    )
-                    generate_kwargs["forced_decoder_ids"] = forced_decoder_ids
+                generate_kwargs = self._get_generate_kwargs(language, include_timestamps=False)
 
                 with torch.no_grad():
                     predicted_ids = self.model.generate(
@@ -410,3 +451,70 @@ class PyTorchSTTBackend:
 
         # Run blocking transcription in thread pool
         return await asyncio.to_thread(_transcribe_sync)
+
+    async def transcribe_with_segments(
+        self,
+        audio_path: str,
+        language: Optional[str] = None,
+        model_size: Optional[str] = None,
+    ) -> DetailedTranscription:
+        """
+        Transcribe audio to text and return segment-level timestamps.
+
+        Raises:
+            NotImplementedError: If timestamp segments are unavailable.
+        """
+        await self.load_model_async(model_size)
+
+        progress_model_name = f"whisper-{self.model_size}"
+
+        def _transcribe_with_segments_sync() -> DetailedTranscription:
+            audio, _sr = load_audio(audio_path, sample_rate=16000)
+
+            with force_offline_if_cached(True, progress_model_name):
+                inputs = self.processor(
+                    audio,
+                    sampling_rate=16000,
+                    return_tensors="pt",
+                )
+                inputs = inputs.to(self.device)
+
+                generate_kwargs = self._get_generate_kwargs(language, include_timestamps=True)
+
+                with torch.no_grad():
+                    predicted_ids = self.model.generate(
+                        inputs["input_features"],
+                        **generate_kwargs,
+                    )
+
+                decoded = self.processor.batch_decode(
+                    predicted_ids,
+                    skip_special_tokens=True,
+                    output_offsets=True,
+                )
+
+            first_item = decoded[0] if decoded else {}
+            if not isinstance(first_item, dict):
+                raise NotImplementedError("Current backend does not support subtitle timestamps.")
+
+            text = str(first_item.get("text", "")).strip()
+            raw_offsets = first_item.get("offsets")
+            if not isinstance(raw_offsets, list):
+                raise NotImplementedError("Current backend does not support subtitle timestamps.")
+
+            segments: list[TranscriptionSegment] = []
+            for raw_offset in raw_offsets:
+                parsed = self._parse_offset_segment(raw_offset, len(segments))
+                if parsed is not None:
+                    segments.append(parsed)
+
+            # If non-empty text has no offsets, timestamps are unavailable on this backend/model.
+            if text and not segments:
+                raise NotImplementedError("Current backend does not support subtitle timestamps.")
+
+            return {
+                "text": text,
+                "segments": segments,
+            }
+
+        return await asyncio.to_thread(_transcribe_with_segments_sync)

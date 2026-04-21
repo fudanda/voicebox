@@ -137,6 +137,19 @@ export interface TranscriptionResponse {
   duration: number;
 }
 
+export interface TranscriptionSegment {
+  index: number;
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface TranscriptionSubtitlesResponse {
+  text: string;
+  duration: number;
+  segments: TranscriptionSegment[];
+}
+
 export interface HealthResponse {
   status: string;
   model_loaded: boolean;

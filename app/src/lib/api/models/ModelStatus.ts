@@ -6,10 +6,12 @@
  * Response model for model status.
  */
 export type ModelStatus = {
-  model_name: string;
-  display_name: string;
-  downloaded: boolean;
-  downloading?: boolean;  // True if download is in progress
-  size_mb?: number | null;
-  loaded?: boolean;
+    model_name: string;
+    display_name: string;
+    hf_repo_id?: (string | null);
+    downloaded: boolean;
+    downloading?: boolean;
+    size_mb?: (number | null);
+    loaded?: boolean;
 };
+

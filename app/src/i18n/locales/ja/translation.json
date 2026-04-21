@@ -18,6 +18,7 @@
     "effects": "エフェクト",
     "audio": "オーディオ",
     "models": "モデル",
+    "transcription": "文字起こし",
     "settings": "設定",
     "updateBadge": "更新"
   },
@@ -829,6 +830,61 @@
       "migrationFailed": "移行に失敗しました",
       "migrationFailedGeneric": "モデルの移行に失敗しました",
       "migrationConnectionLost": "移行中に接続が切断されました"
+    }
+  },
+  "transcription": {
+    "title": "文字起こし",
+    "subtitle": "Whisper を使って音声からテキストと字幕タイムスタンプを抽出します。",
+    "source": {
+      "label": "入力ソース",
+      "upload": "ファイルをアップロード",
+      "sample": "音声プロファイルサンプル"
+    },
+    "upload": {
+      "label": "音声ファイル",
+      "hint": "文字起こしする音声ファイルを選択してください。"
+    },
+    "sample": {
+      "profile": "プロファイル",
+      "sample": "サンプル",
+      "emptyProfiles": "利用可能なプロファイルがありません",
+      "emptySamples": "このプロファイルにはサンプルがありません",
+      "sampleLabel": "サンプル {{index}}"
+    },
+    "options": {
+      "language": "言語",
+      "languageAuto": "自動検出",
+      "model": "Whisper モデル"
+    },
+    "actions": {
+      "transcribe": "文字起こし",
+      "transcribing": "文字起こし中…"
+    },
+    "status": {
+      "downloading": "モデルをダウンロード中です。完了後に再試行してください。"
+    },
+    "result": {
+      "title": "結果",
+      "placeholder": "文字起こしを実行すると、テキストと字幕セグメントが表示されます。",
+      "duration": "長さ: {{seconds}}秒",
+      "segments": "セグメント: {{count}}",
+      "text": "テキスト",
+      "segmentsTitle": "セグメント"
+    },
+    "export": {
+      "txt": "TXT を保存",
+      "srt": "SRT を保存",
+      "vtt": "VTT を保存"
+    },
+    "toast": {
+      "fileRequired": "音声ファイルを選択してください。",
+      "sampleRequired": "プロファイルサンプルを選択してください。",
+      "failed": "文字起こしに失敗しました",
+      "exportFailed": "エクスポートに失敗しました",
+      "modelReady": "モデルのダウンロードが完了しました",
+      "modelReadyDescription": "文字起こしを再試行できます。",
+      "downloading": "モデルをダウンロード中です",
+      "downloadingDescription": "完了後にもう一度文字起こしを実行してください。"
     }
   }
 }

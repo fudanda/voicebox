@@ -18,6 +18,7 @@
     "effects": "效果",
     "audio": "音訊",
     "models": "模型",
+    "transcription": "轉寫",
     "settings": "設定",
     "updateBadge": "更新"
   },
@@ -829,6 +830,61 @@
       "migrationFailed": "遷移失敗",
       "migrationFailedGeneric": "遷移模型失敗",
       "migrationConnectionLost": "遷移期間連線中斷"
+    }
+  },
+  "transcription": {
+    "title": "轉寫",
+    "subtitle": "使用 Whisper 從音訊中提取文字與字幕時間戳。",
+    "source": {
+      "label": "輸入來源",
+      "upload": "上傳檔案",
+      "sample": "語音檔案樣本"
+    },
+    "upload": {
+      "label": "音訊檔案",
+      "hint": "選擇要轉寫的音訊檔案。"
+    },
+    "sample": {
+      "profile": "語音檔案",
+      "sample": "樣本",
+      "emptyProfiles": "目前沒有可用的語音檔案",
+      "emptySamples": "此語音檔案沒有樣本",
+      "sampleLabel": "樣本 {{index}}"
+    },
+    "options": {
+      "language": "語言",
+      "languageAuto": "自動偵測",
+      "model": "Whisper 模型"
+    },
+    "actions": {
+      "transcribe": "開始轉寫",
+      "transcribing": "轉寫中…"
+    },
+    "status": {
+      "downloading": "模型下載中，完成後請重試。"
+    },
+    "result": {
+      "title": "轉寫結果",
+      "placeholder": "執行轉寫後可查看文字與字幕分段。",
+      "duration": "時長：{{seconds}} 秒",
+      "segments": "分段：{{count}}",
+      "text": "文字",
+      "segmentsTitle": "分段"
+    },
+    "export": {
+      "txt": "匯出 TXT",
+      "srt": "匯出 SRT",
+      "vtt": "匯出 VTT"
+    },
+    "toast": {
+      "fileRequired": "請選擇音訊檔案。",
+      "sampleRequired": "請選擇語音檔案樣本。",
+      "failed": "轉寫失敗",
+      "exportFailed": "匯出失敗",
+      "modelReady": "模型下載完成",
+      "modelReadyDescription": "現在可以重新嘗試轉寫。",
+      "downloading": "模型正在下載",
+      "downloadingDescription": "請等待下載完成後再按一次轉寫。"
     }
   }
 }

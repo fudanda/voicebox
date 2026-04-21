@@ -17,7 +17,7 @@ from ..utils.hf_offline_patch import patch_huggingface_hub_offline, ensure_origi
 patch_huggingface_hub_offline()
 ensure_original_qwen_config_cached()
 
-from . import TTSBackend, STTBackend, LANGUAGE_CODE_TO_NAME, WHISPER_HF_REPOS
+from . import TTSBackend, STTBackend, DetailedTranscription, LANGUAGE_CODE_TO_NAME, WHISPER_HF_REPOS
 from .base import is_model_cached, combine_voice_prompts as _combine_voice_prompts, model_load_progress
 from ..utils.cache import get_cache_key, get_cached_voice_prompt, cache_voice_prompt
 from ..utils.hf_offline_patch import force_offline_if_cached
@@ -375,3 +375,12 @@ class MLXSTTBackend:
 
         # Run blocking transcription in thread pool
         return await asyncio.to_thread(_transcribe_sync)
+
+    async def transcribe_with_segments(
+        self,
+        audio_path: str,
+        language: Optional[str] = None,
+        model_size: Optional[str] = None,
+    ) -> DetailedTranscription:
+        """MLX STT currently does not expose stable segment timestamps."""
+        raise NotImplementedError("Current backend does not support subtitle timestamps.")

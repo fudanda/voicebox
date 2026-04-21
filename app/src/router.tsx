@@ -19,6 +19,7 @@ import { LogsPage } from '@/components/ServerTab/LogsPage';
 import { SettingsLayout } from '@/components/ServerTab/ServerTab';
 import { Sidebar } from '@/components/Sidebar';
 import { StoriesTab } from '@/components/StoriesTab/StoriesTab';
+import { TranscriptionTab } from '@/components/TranscriptionTab/TranscriptionTab';
 import { Toaster } from '@/components/ui/toaster';
 import { VoicesTab } from '@/components/VoicesTab/VoicesTab';
 import { useGenerationProgress } from '@/lib/hooks/useGenerationProgress';
@@ -132,6 +133,13 @@ const modelsRoute = createRoute({
   component: ModelsTab,
 });
 
+// Transcription route
+const transcriptionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/transcription',
+  component: TranscriptionTab,
+});
+
 // Settings layout route (parent for sub-tabs)
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -193,6 +201,7 @@ const routeTree = rootRoute.addChildren([
   audioRoute,
   effectsRoute,
   modelsRoute,
+  transcriptionRoute,
   settingsRoute.addChildren([
     settingsGeneralRoute,
     settingsGenerationRoute,

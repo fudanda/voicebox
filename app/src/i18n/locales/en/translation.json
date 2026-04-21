@@ -18,6 +18,7 @@
     "effects": "Effects",
     "audio": "Audio",
     "models": "Models",
+    "transcription": "Transcription",
     "settings": "Settings",
     "updateBadge": "Update"
   },
@@ -829,6 +830,61 @@
       "migrationFailed": "Migration failed",
       "migrationFailedGeneric": "Failed to migrate models",
       "migrationConnectionLost": "Lost connection during migration"
+    }
+  },
+  "transcription": {
+    "title": "Transcription",
+    "subtitle": "Extract text and subtitle timestamps from audio with Whisper.",
+    "source": {
+      "label": "Source",
+      "upload": "Upload File",
+      "sample": "Voice Sample"
+    },
+    "upload": {
+      "label": "Audio File",
+      "hint": "Select an audio file to transcribe."
+    },
+    "sample": {
+      "profile": "Profile",
+      "sample": "Sample",
+      "emptyProfiles": "No profiles available",
+      "emptySamples": "No samples in this profile",
+      "sampleLabel": "Sample {{index}}"
+    },
+    "options": {
+      "language": "Language",
+      "languageAuto": "Auto detect",
+      "model": "Whisper Model"
+    },
+    "actions": {
+      "transcribe": "Transcribe",
+      "transcribing": "Transcribing…"
+    },
+    "status": {
+      "downloading": "Model is downloading. Retry after it completes."
+    },
+    "result": {
+      "title": "Result",
+      "placeholder": "Run transcription to view text and subtitle segments.",
+      "duration": "Duration: {{seconds}}s",
+      "segments": "Segments: {{count}}",
+      "text": "Text",
+      "segmentsTitle": "Segments"
+    },
+    "export": {
+      "txt": "Export TXT",
+      "srt": "Export SRT",
+      "vtt": "Export VTT"
+    },
+    "toast": {
+      "fileRequired": "Please choose an audio file.",
+      "sampleRequired": "Please choose a profile sample.",
+      "failed": "Transcription failed",
+      "exportFailed": "Export failed",
+      "modelReady": "Model download complete",
+      "modelReadyDescription": "You can now retry transcription.",
+      "downloading": "Model is downloading",
+      "downloadingDescription": "Wait for completion, then click transcribe again."
     }
   }
 }

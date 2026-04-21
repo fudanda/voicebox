@@ -7,7 +7,7 @@ and a model config registry that eliminates per-engine dispatch maps.
 
 import threading
 from dataclasses import dataclass, field
-from typing import Protocol, Optional, Tuple, List
+from typing import Protocol, Optional, Tuple, List, TypedDict
 from typing_extensions import runtime_checkable
 import numpy as np
 
@@ -33,6 +33,22 @@ WHISPER_HF_REPOS = {
     "large": "openai/whisper-large-v3",
     "turbo": "openai/whisper-large-v3-turbo",
 }
+
+
+class TranscriptionSegment(TypedDict):
+    """Internal segment representation returned by STT backends."""
+
+    index: int
+    start: float
+    end: float
+    text: str
+
+
+class DetailedTranscription(TypedDict):
+    """Detailed STT payload with full text + segment timestamps."""
+
+    text: str
+    segments: list[TranscriptionSegment]
 
 
 @dataclass
@@ -141,6 +157,20 @@ class STTBackend(Protocol):
 
         Returns:
             Transcribed text
+        """
+        ...
+
+    async def transcribe_with_segments(
+        self,
+        audio_path: str,
+        language: Optional[str] = None,
+        model_size: Optional[str] = None,
+    ) -> DetailedTranscription:
+        """
+        Transcribe audio to text with segment-level timestamps.
+
+        Returns:
+            Dict containing full text and segment timestamps.
         """
         ...
 

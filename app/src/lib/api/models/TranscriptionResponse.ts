@@ -6,6 +6,7 @@
  * Response model for transcription.
  */
 export type TranscriptionResponse = {
-  text: string;
-  duration: number;
+    text: string;
+    duration: number;
 };
+
