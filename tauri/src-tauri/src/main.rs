@@ -53,6 +53,74 @@ fn find_voicebox_pid_on_port(port: u16) -> Option<u32> {
     None
 }
 
+/// Find a process PID on a given listening port that can be cleanly stopped.
+///
+/// For `uvicorn --reload` on Windows, the listener is often a child python
+/// process while the parent python process keeps supervising and can respawn.
+/// In that case, prefer returning the parent PID so `/T` kill stops the whole
+/// process tree.
+#[cfg(windows)]
+fn find_stoppable_pid_on_port(port: u16) -> Option<u32> {
+    use std::process::Command;
+
+    let ps_script = format!(
+        "$conn = Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; \
+         if ($null -eq $conn) {{ exit 0 }}; \
+         function IsManaged([object]$p) {{ \
+             if ($null -eq $p) {{ return $false }}; \
+             $name = ($p.Name + '').ToLower(); \
+             $cmd = ($p.CommandLine + '').ToLower(); \
+             if ($name -like 'voicebox*' -or $cmd -like '*voicebox-server*') {{ return $true }}; \
+             if ($name -like 'python*' -and $cmd -like '*uvicorn*' -and $cmd -like '*backend.main:app*') {{ return $true }}; \
+             return $false; \
+         }}; \
+         $targetProcessId = [int]$conn.OwningProcess; \
+         $proc = Get-CimInstance Win32_Process -Filter \"ProcessId = $targetProcessId\" -ErrorAction SilentlyContinue; \
+         if (-not (IsManaged $proc)) {{ exit 0 }}; \
+         for ($i = 0; $i -lt 6; $i++) {{ \
+             $parentProcessId = [int]$proc.ParentProcessId; \
+             if ($parentProcessId -le 0) {{ break }}; \
+             $parent = Get-CimInstance Win32_Process -Filter \"ProcessId = $parentProcessId\" -ErrorAction SilentlyContinue; \
+             if ($null -eq $parent) {{ break }}; \
+             $pname = ($parent.Name + '').ToLower(); \
+             $pcmd = ($parent.CommandLine + '').ToLower(); \
+             if ($pname -like 'python*' -and $pcmd -like '*uvicorn*' -and $pcmd -like '*backend.main:app*') {{ \
+                 $targetProcessId = $parentProcessId; \
+                 $proc = $parent; \
+                 continue; \
+             }} \
+             break; \
+         }}; \
+         Write-Output $targetProcessId",
+        port
+    );
+
+    if let Ok(output) = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps_script])
+        .output()
+    {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        for line in output_str.lines() {
+            if let Ok(pid) = line.trim().parse::<u32>() {
+                if pid > 0 {
+                    return Some(pid);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn is_port_in_use(port: u16) -> bool {
+    use std::net::TcpStream;
+    TcpStream::connect_timeout(
+        &format!("127.0.0.1:{}", port).parse().unwrap(),
+        std::time::Duration::from_millis(300),
+    )
+    .is_ok()
+}
+
 /// Check if a Voicebox server is responding on the given port.
 ///
 /// Sends an HTTP GET to `/health` and returns `true` only if the response
@@ -143,6 +211,10 @@ async fn start_server(
                         println!("Port {} in use by '{}' (PID: {}), checking if it's a Voicebox server...", SERVER_PORT, command, pid_str);
                         if check_health(SERVER_PORT).await {
                             println!("Health check passed — reusing external server on port {}", SERVER_PORT);
+                            if let Ok(pid) = pid_str.parse::<u32>() {
+                                // Track external server PID so restart/stop can terminate it.
+                                *state.server_pid.lock().unwrap() = Some(pid);
+                            }
                             return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
                         }
                         println!("Health check failed — port is occupied by a non-Voicebox process");
@@ -175,6 +247,10 @@ async fn start_server(
             println!("Port {} in use by unknown process, checking if it's a Voicebox server...", SERVER_PORT);
             if check_health(SERVER_PORT).await {
                 println!("Health check passed — reusing external server on port {}", SERVER_PORT);
+                if let Some(pid) = find_stoppable_pid_on_port(SERVER_PORT) {
+                    println!("Tracking external server PID {} for restart/stop", pid);
+                    *state.server_pid.lock().unwrap() = Some(pid);
+                }
                 return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
             }
             return Err(format!(
@@ -277,8 +353,20 @@ async fn start_server(
                     // Output format: "voicebox-server X.Y.Z\n"
                     let version_str = String::from_utf8_lossy(&output.stdout);
                     let binary_version = version_str.trim().split_whitespace().last().unwrap_or("");
-                    if binary_version == app_version {
+                    if binary_version.is_empty() {
+                        println!("Could not parse CUDA binary version output. Falling back to CPU.");
+                        false
+                    } else if binary_version == app_version {
                         println!("CUDA binary version {} matches app version", binary_version);
+                        true
+                    } else if cfg!(debug_assertions) {
+                        // In local dev, app shell and backend package versions can be intentionally
+                        // out-of-sync (e.g. tauri 0.4.2 with backend/CUDA assets still at 0.4.1).
+                        // Prefer trying CUDA rather than hard-failing into the placeholder CPU sidecar.
+                        println!(
+                            "CUDA binary version mismatch: binary={}, app={}. Continuing in dev mode.",
+                            binary_version, app_version
+                        );
                         true
                     } else {
                         println!(
@@ -585,36 +673,55 @@ async fn start_server(
 async fn stop_server(state: State<'_, ServerState>) -> Result<(), String> {
     let pid = state.server_pid.lock().unwrap().take();
     let _child = state.child.lock().unwrap().take();
-    
-    if let Some(pid) = pid {
-        println!("stop_server: Stopping server with PID: {}", pid);
-        
-        #[cfg(unix)]
-        {
+
+    #[cfg(unix)]
+    {
+        if let Some(pid) = pid {
+            println!("stop_server: Stopping server with PID: {}", pid);
             use std::process::Command;
             // Kill process group with SIGTERM first
             let _ = Command::new("kill")
                 .args(["-TERM", "--", &format!("-{}", pid)])
                 .output();
-            
+
             // Brief wait then force kill
             std::thread::sleep(std::time::Duration::from_millis(100));
-            
+
             let _ = Command::new("kill")
                 .args(["-9", "--", &format!("-{}", pid)])
                 .output();
             let _ = Command::new("kill")
                 .args(["-9", &pid.to_string()])
                 .output();
-            
+
             println!("stop_server: Process group kill completed");
         }
-        
-        #[cfg(windows)]
-        {
-            // Send graceful shutdown via HTTP — the server's parent-pid watchdog
-            // will also handle cleanup if this app process exits.
-            println!("Sending graceful shutdown via HTTP...");
+    }
+
+    #[cfg(windows)]
+    {
+        let mut pid_to_kill = pid;
+        if pid_to_kill.is_none() {
+            pid_to_kill = find_stoppable_pid_on_port(SERVER_PORT);
+            if let Some(found) = pid_to_kill {
+                println!(
+                    "stop_server: discovered existing managed server PID {} on port {}",
+                    found, SERVER_PORT
+                );
+            }
+        }
+
+        if let Some(pid) = pid_to_kill {
+            println!("stop_server: Forcing process tree kill for PID: {}", pid);
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .output();
+            tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+        }
+
+        // If anything is still listening, try graceful shutdown endpoint.
+        if is_port_in_use(SERVER_PORT) {
+            println!("stop_server: Sending graceful shutdown via HTTP...");
             if let Ok(client) = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(2))
                 .build()
@@ -626,8 +733,18 @@ async fn stop_server(state: State<'_, ServerState>) -> Result<(), String> {
             } else {
                 eprintln!("Failed to construct HTTP client for shutdown request");
             }
+            tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+        }
 
-            println!("Shutdown request sent (server watchdog will handle cleanup)");
+        // One more forced kill pass if port is still occupied by a managed process.
+        if is_port_in_use(SERVER_PORT) {
+            if let Some(pid) = find_stoppable_pid_on_port(SERVER_PORT) {
+                println!("stop_server: second-pass force kill for PID: {}", pid);
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .output();
+                tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+            }
         }
     }
     
@@ -656,7 +773,44 @@ async fn restart_server(
 
     // Wait for port to be released
     println!("restart_server: waiting for port release...");
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    for _ in 0..40 {
+        if !is_port_in_use(SERVER_PORT) {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    }
+
+    #[cfg(windows)]
+    {
+        use std::collections::HashSet;
+        let mut killed = HashSet::new();
+        for _ in 0..8 {
+            if !is_port_in_use(SERVER_PORT) {
+                break;
+            }
+            if let Some(pid) = find_stoppable_pid_on_port(SERVER_PORT) {
+                if killed.insert(pid) {
+                    println!(
+                        "restart_server: port still in use, force-killing managed server PID {}",
+                        pid
+                    );
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/PID", &pid.to_string(), "/T", "/F"])
+                        .output();
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            } else {
+                break;
+            }
+        }
+    }
+
+    if is_port_in_use(SERVER_PORT) {
+        return Err(format!(
+            "Could not stop existing server on port {}. Please stop external dev backend and retry.",
+            SERVER_PORT
+        ));
+    }
 
     // Start server again (will auto-detect CUDA binary and use stored models_dir)
     println!("restart_server: starting server...");

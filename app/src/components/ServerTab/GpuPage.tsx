@@ -190,13 +190,28 @@ export function GpuPage() {
     }
   }, []);
 
-  const startHealthPolling = useCallback(() => {
+  const startHealthPolling = useCallback((expectedVariant?: 'cuda' | 'cpu') => {
     clearHealthPolling();
+    let attempts = 0;
 
     healthPollRef.current = setInterval(async () => {
       try {
+        attempts += 1;
         const result = await apiClient.getHealth();
         if (result.status === 'healthy') {
+          if (expectedVariant && result.backend_variant !== expectedVariant) {
+            // Give the backend a brief grace period to fully switch variant.
+            if (attempts >= 15) {
+              clearHealthPolling();
+              setRestartPhase('idle');
+              setError(
+                expectedVariant === 'cuda'
+                  ? `Restarted, but server is still using '${result.backend_variant ?? 'unknown'}' backend. If you are running 'just dev', stop the external Python backend first.`
+                  : `Restarted, but server backend is '${result.backend_variant ?? 'unknown'}' (expected 'cpu').`,
+              );
+            }
+            return;
+          }
           clearHealthPolling();
           setRestartPhase('ready');
           queryClient.invalidateQueries();
@@ -209,12 +224,12 @@ export function GpuPage() {
   }, [queryClient, clearHealthPolling]);
 
   const restartServerWithPolling = useCallback(
-    async (errorMessage: string) => {
+    async (errorMessage: string, expectedVariant?: 'cuda' | 'cpu') => {
       setRestartPhase('stopping');
       try {
         await platform.lifecycle.restartServer();
         setRestartPhase('waiting');
-        startHealthPolling();
+        startHealthPolling(expectedVariant);
       } catch (e: unknown) {
         clearHealthPolling();
         setRestartPhase('idle');
@@ -242,7 +257,7 @@ export function GpuPage() {
   const handleRestart = async () => {
     setError(null);
     try {
-      await restartServerWithPolling(t('settings.gpu.errors.restartFailed'));
+      await restartServerWithPolling(t('settings.gpu.errors.restartFailed'), 'cuda');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t('settings.gpu.errors.restartFailed'));
     }
@@ -253,7 +268,7 @@ export function GpuPage() {
     setRestartPhase('stopping');
     try {
       await apiClient.deleteCudaBackend();
-      await restartServerWithPolling(t('settings.gpu.errors.switchCpu'));
+      await restartServerWithPolling(t('settings.gpu.errors.switchCpu'), 'cpu');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t('settings.gpu.errors.switchCpu'));
       refetchCudaStatus();
