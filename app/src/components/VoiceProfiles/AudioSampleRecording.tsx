@@ -26,6 +26,7 @@ interface AudioSampleRecordingProps {
   file: File | null | undefined;
   isRecording: boolean;
   duration: number;
+  maxDurationSeconds?: number;
   onStart: () => void;
   onStop: () => void;
   onCancel: () => void;
@@ -40,6 +41,7 @@ export function AudioSampleRecording({
   file,
   isRecording,
   duration,
+  maxDurationSeconds = 300,
   onStart,
   onStop,
   onCancel,
@@ -120,7 +122,9 @@ export function AudioSampleRecording({
                 {t('audioSample.stopRecording')}
               </Button>
               <p className="relative z-10 text-sm text-muted-foreground text-center">
-                {t('audioSample.remaining', { time: formatAudioDuration(30 - duration) })}
+                {t('audioSample.remaining', {
+                  time: formatAudioDuration(Math.max(0, maxDurationSeconds - duration)),
+                })}
               </p>
             </div>
           )}

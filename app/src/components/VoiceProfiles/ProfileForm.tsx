@@ -60,7 +60,7 @@ import { AudioSampleSystem } from './AudioSampleSystem';
 import { AudioSampleUpload } from './AudioSampleUpload';
 import { SampleList } from './SampleList';
 
-const MAX_AUDIO_DURATION_SECONDS = 30;
+const MAX_AUDIO_DURATION_SECONDS = 300;
 const PRESET_ONLY_ENGINES = new Set(['kokoro', 'qwen_custom_voice']);
 const DEFAULT_ENGINE_OPTIONS = [
   { value: 'qwen', label: 'Qwen3-TTS' },
@@ -227,7 +227,7 @@ export function ProfileForm() {
     stopRecording,
     cancelRecording,
   } = useAudioRecording({
-    maxDurationSeconds: 29,
+    maxDurationSeconds: MAX_AUDIO_DURATION_SECONDS,
     onRecordingComplete: (blob, recordedDuration) => {
       const file = new File([blob], `recording-${Date.now()}.webm`, {
         type: blob.type || 'audio/webm',
@@ -253,7 +253,7 @@ export function ProfileForm() {
     stopRecording: stopSystemRecording,
     cancelRecording: cancelSystemRecording,
   } = useSystemAudioCapture({
-    maxDurationSeconds: 29,
+    maxDurationSeconds: MAX_AUDIO_DURATION_SECONDS,
     onRecordingComplete: (blob, recordedDuration) => {
       const file = new File([blob], `system-audio-${Date.now()}.wav`, {
         type: blob.type || 'audio/wav',
@@ -993,6 +993,7 @@ export function ProfileForm() {
                                     file={selectedFile}
                                     isRecording={isRecording}
                                     duration={duration}
+                                    maxDurationSeconds={MAX_AUDIO_DURATION_SECONDS}
                                     onStart={startRecording}
                                     onStop={stopRecording}
                                     onCancel={handleCancelRecording}
@@ -1015,6 +1016,7 @@ export function ProfileForm() {
                                       file={selectedFile}
                                       isRecording={isSystemRecording}
                                       duration={systemDuration}
+                                      maxDurationSeconds={MAX_AUDIO_DURATION_SECONDS}
                                       onStart={startSystemRecording}
                                       onStop={stopSystemRecording}
                                       onCancel={handleCancelRecording}

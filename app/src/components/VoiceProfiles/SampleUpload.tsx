@@ -32,6 +32,8 @@ import { AudioSampleRecording } from './AudioSampleRecording';
 import { AudioSampleSystem } from './AudioSampleSystem';
 import { AudioSampleUpload } from './AudioSampleUpload';
 
+const MAX_AUDIO_DURATION_SECONDS = 300;
+
 const sampleSchema = z.object({
   file: z.instanceof(File, { message: 'Please select an audio file' }),
   referenceText: z
@@ -74,7 +76,7 @@ export function SampleUpload({ profileId, open, onOpenChange }: SampleUploadProp
     stopRecording,
     cancelRecording,
   } = useAudioRecording({
-    maxDurationSeconds: 29,
+    maxDurationSeconds: MAX_AUDIO_DURATION_SECONDS,
     onRecordingComplete: (blob, recordedDuration) => {
       // Convert blob to File object
       const file = new File([blob], `recording-${Date.now()}.webm`, {
@@ -101,7 +103,7 @@ export function SampleUpload({ profileId, open, onOpenChange }: SampleUploadProp
     stopRecording: stopSystemRecording,
     cancelRecording: cancelSystemRecording,
   } = useSystemAudioCapture({
-    maxDurationSeconds: 29,
+    maxDurationSeconds: MAX_AUDIO_DURATION_SECONDS,
     onRecordingComplete: (blob, recordedDuration) => {
       // Convert blob to File object
       const file = new File([blob], `system-audio-${Date.now()}.wav`, {
@@ -278,6 +280,7 @@ export function SampleUpload({ profileId, open, onOpenChange }: SampleUploadProp
                       file={selectedFile}
                       isRecording={isRecording}
                       duration={duration}
+                      maxDurationSeconds={MAX_AUDIO_DURATION_SECONDS}
                       onStart={startRecording}
                       onStop={stopRecording}
                       onCancel={handleCancelRecording}
@@ -300,6 +303,7 @@ export function SampleUpload({ profileId, open, onOpenChange }: SampleUploadProp
                         file={selectedFile}
                         isRecording={isSystemRecording}
                         duration={systemDuration}
+                        maxDurationSeconds={MAX_AUDIO_DURATION_SECONDS}
                         onStart={startSystemRecording}
                         onStop={stopSystemRecording}
                         onCancel={handleCancelRecording}

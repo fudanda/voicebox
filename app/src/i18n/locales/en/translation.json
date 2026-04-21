@@ -191,7 +191,7 @@
   },
   "audioSample": {
     "chooseFile": "Choose File",
-    "uploadHint": "Click to choose a file or drag and drop. Maximum duration: 30 seconds.",
+    "uploadHint": "Click to choose a file or drag and drop. Maximum duration: 5 minutes.",
     "fileUploaded": "File uploaded",
     "fileLabel": "File: {{name}}",
     "play": "Play",
@@ -200,13 +200,13 @@
     "transcribing": "Transcribing…",
     "remove": "Remove",
     "startRecording": "Start Recording",
-    "recordHint": "Click to start recording. Maximum duration: 30 seconds.",
+    "recordHint": "Click to start recording. Maximum duration: 5 minutes.",
     "stopRecording": "Stop Recording",
     "remaining": "{{time}} remaining",
     "recordingComplete": "Recording complete",
     "recordAgain": "Record Again",
     "startCapture": "Start Capture",
-    "systemHint": "Capture audio from your system. Maximum duration: 30 seconds.",
+    "systemHint": "Capture audio from your system. Maximum duration: 5 minutes.",
     "stopCapture": "Stop Capture",
     "captureComplete": "Capture complete",
     "captureAgain": "Capture Again"
@@ -223,7 +223,7 @@
     "editTranscription": "Edit transcription",
     "deleteSample": "Delete sample",
     "addSample": "Add Sample",
-    "note": "Note: A single 30-second sample is the sweet spot. Quality may decrease with multiple samples. In a future update samples might be interchangeable and tagged for varying styles of the same voice.",
+    "note": "Note: A single 30-second sample is still the sweet spot, but the maximum allowed duration is now 5 minutes. Quality may decrease with multiple samples. In a future update samples might be interchangeable and tagged for varying styles of the same voice.",
     "deleteDialog": {
       "title": "Delete Sample",
       "description": "Are you sure you want to delete this audio sample? This action cannot be undone.",

@@ -8,7 +8,7 @@ interface UseAudioRecordingOptions {
 }
 
 export function useAudioRecording({
-  maxDurationSeconds = 29,
+  maxDurationSeconds = 300,
   onRecordingComplete,
 }: UseAudioRecordingOptions = {}) {
   const platform = usePlatform();
@@ -93,9 +93,13 @@ export function useAudioRecording({
         // cancelRecording() clears chunks and sets cancelledRef synchronously
         // before this async handler runs, so we must check it first.
         const wasCancelled = cancelledRef.current;
-        const recordedDuration = startTimeRef.current
+        const rawRecordedDuration = startTimeRef.current
           ? (Date.now() - startTimeRef.current) / 1000
           : undefined;
+        const recordedDuration =
+          rawRecordedDuration !== undefined
+            ? Math.min(rawRecordedDuration, maxDurationSeconds)
+            : undefined;
 
         const webmBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
 

@@ -11,7 +11,7 @@ interface UseSystemAudioCaptureOptions {
  * Uses ScreenCaptureKit on macOS and WASAPI loopback on Windows.
  */
 export function useSystemAudioCapture({
-  maxDurationSeconds = 29,
+  maxDurationSeconds = 300,
   onRecordingComplete,
 }: UseSystemAudioCaptureOptions = {}) {
   const platform = usePlatform();
@@ -110,9 +110,13 @@ export function useSystemAudioCapture({
       const blob = await platform.audio.stopSystemAudioCapture();
 
       // Pass the actual recorded duration
-      const recordedDuration = startTimeRef.current
+      const rawRecordedDuration = startTimeRef.current
         ? (Date.now() - startTimeRef.current) / 1000
         : undefined;
+      const recordedDuration =
+        rawRecordedDuration !== undefined
+          ? Math.min(rawRecordedDuration, maxDurationSeconds)
+          : undefined;
       onRecordingComplete?.(blob, recordedDuration);
     } catch (err) {
       const errorMessage =

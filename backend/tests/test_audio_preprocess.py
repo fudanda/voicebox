@@ -61,7 +61,7 @@ def test_silence_is_trimmed_with_padding_kept():
 def test_clean_audio_is_not_padded_past_original_length():
     # Well-recorded audio with no edge silence shouldn't get longer after
     # preprocessing — otherwise a 29.9 s upload could be pushed past the
-    # 30 s max_duration ceiling downstream.
+    # max_duration ceiling downstream.
     audio = _tone(3.0, amp=0.3)
     out = preprocess_reference_audio(audio, SR)
     assert len(out) <= len(audio)

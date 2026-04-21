@@ -191,7 +191,7 @@
   },
   "audioSample": {
     "chooseFile": "選擇檔案",
-    "uploadHint": "點選以選擇檔案或拖放。最大時長:30 秒。",
+    "uploadHint": "點選以選擇檔案或拖放。最大時長:5 分鐘。",
     "fileUploaded": "檔案已上傳",
     "fileLabel": "檔案:{{name}}",
     "play": "播放",
@@ -200,13 +200,13 @@
     "transcribing": "轉錄中…",
     "remove": "移除",
     "startRecording": "開始錄製",
-    "recordHint": "點選以開始錄製。最大時長:30 秒。",
+    "recordHint": "點選以開始錄製。最大時長:5 分鐘。",
     "stopRecording": "停止錄製",
     "remaining": "剩餘 {{time}}",
     "recordingComplete": "錄製完成",
     "recordAgain": "重新錄製",
     "startCapture": "開始擷取",
-    "systemHint": "從您的系統擷取音訊。最大時長:30 秒。",
+    "systemHint": "從您的系統擷取音訊。最大時長:5 分鐘。",
     "stopCapture": "停止擷取",
     "captureComplete": "擷取完成",
     "captureAgain": "重新擷取"
@@ -223,7 +223,7 @@
     "editTranscription": "編輯轉錄",
     "deleteSample": "刪除樣本",
     "addSample": "新增樣本",
-    "note": "注意:單一 30 秒的樣本效果最佳。多個樣本可能會降低品質。未來版本中樣本可能可互換,並為同一聲音的不同風格加上標籤。",
+    "note": "注意:單一 30 秒樣本依然是最佳實務,但目前最大支援時長已提升到 5 分鐘。多個樣本可能會降低品質。未來版本中樣本可能可互換,並為同一聲音的不同風格加上標籤。",
     "deleteDialog": {
       "title": "刪除樣本",
       "description": "確定要刪除此音訊樣本嗎?此操作無法復原。",
