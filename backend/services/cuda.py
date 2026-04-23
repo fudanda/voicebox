@@ -12,22 +12,25 @@ complete PyInstaller --onedir directory structure that torch expects.
 Downloaded archives are cached directly in {data_dir}/backends/cuda/ as:
   - .download-CUDA-server.tmp
   - .download-CUDA-libraries.tmp
-If these files already exist and pass SHA-256 verification, they are reused.
+Archive source priority:
+  1. Existing cache under {data_dir}/backends/cuda/
+  2. Development mode: {repo_root}/release-assets/
+  3. Frozen mode: install-dir probe (exe dir, parent, grandparent + release-assets)
+  4. GitHub release download fallback
 """
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
+import shutil
 import sys
 import tarfile
 from pathlib import Path
-from typing import Optional
 
+from .. import __version__
 from ..config import get_data_dir
 from ..utils.progress import get_progress_manager
-from .. import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +70,7 @@ def get_cuda_exe_name() -> str:
     return "voicebox-server-cuda"
 
 
-def get_cuda_binary_path() -> Optional[Path]:
+def get_cuda_binary_path() -> Path | None:
     """Return path to the CUDA executable if it exists inside the onedir."""
     p = get_cuda_dir() / get_cuda_exe_name()
     if p.exists():
@@ -80,7 +83,7 @@ def get_cuda_libs_manifest_path() -> Path:
     return get_cuda_dir() / "cuda-libs.json"
 
 
-def get_installed_cuda_libs_version() -> Optional[str]:
+def get_installed_cuda_libs_version() -> str | None:
     """Read the installed CUDA libs version from cuda-libs.json, or None."""
     manifest_path = get_cuda_libs_manifest_path()
     if not manifest_path.exists():
@@ -118,7 +121,7 @@ def get_cuda_status() -> dict:
     }
 
 
-def _needs_server_download(version: Optional[str] = None) -> bool:
+def _needs_server_download(version: str | None = None) -> bool:
     """Check if the server core archive needs to be (re)downloaded."""
     cuda_path = get_cuda_binary_path()
     if not cuda_path:
@@ -139,22 +142,79 @@ def _needs_cuda_libs_download() -> bool:
     return installed != CUDA_LIBS_VERSION
 
 
-def _sha256_file(path: Path) -> str:
-    """Compute SHA-256 hash for a file."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as f:
-        while True:
-            chunk = f.read(1024 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-    return digest.hexdigest()
+def _is_frozen_runtime() -> bool:
+    """Whether this process is running from a frozen executable."""
+    return bool(getattr(sys, "frozen", False))
+
+
+def _get_repo_root() -> Path:
+    """Repository root for development-mode local archive lookup."""
+    return Path(__file__).resolve().parents[2]
+
+
+def _get_archive_cache_path(dest_dir: Path, label: str) -> Path:
+    """Canonical cache file path for an archive label."""
+    return dest_dir / f".download-{label.replace(' ', '-')}.tmp"
+
+
+def _iter_install_search_dirs() -> list[Path]:
+    """Directories to probe for local archives in frozen/runtime installs."""
+    exe_dir = Path(sys.executable).resolve().parent
+    levels = [exe_dir, exe_dir.parent, exe_dir.parent.parent]
+    seen: set[Path] = set()
+    candidates: list[Path] = []
+
+    for base in levels:
+        for candidate in (base, base / "release-assets"):
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            candidates.append(resolved)
+
+    return candidates
+
+
+def _find_local_archive_source(archive_name: str, cache_path: Path) -> tuple[Path | None, str | None]:
+    """Resolve the best available local source archive for this run."""
+    if cache_path.exists():
+        return cache_path, "cache"
+
+    if not _is_frozen_runtime():
+        dev_archive = _get_repo_root() / "release-assets" / archive_name
+        if dev_archive.exists():
+            return dev_archive, "dev-release-assets"
+        return None, None
+
+    for base_dir in _iter_install_search_dirs():
+        archive_path = base_dir / archive_name
+        if archive_path.exists():
+            return archive_path, "install-dir"
+
+    return None, None
+
+
+def _extract_archive(archive_path: Path, dest_dir: Path, label: str, progress_offset: int, total_size: int, current: int) -> None:
+    """Extract a .tar.gz archive into dest_dir."""
+    progress = get_progress_manager()
+    progress.update_progress(
+        PROGRESS_KEY,
+        current=progress_offset + current,
+        total=total_size,
+        filename=f"Extracting {label}...",
+        status="downloading",
+    )
+    with tarfile.open(archive_path, "r:gz") as tar:
+        if sys.version_info >= (3, 12):  # noqa: UP036
+            tar.extractall(path=dest_dir, filter="data")
+        else:
+            tar.extractall(path=dest_dir)
 
 
 async def _download_and_extract_archive(
     client,
     url: str,
-    sha256_url: Optional[str],
+    archive_name: str,
     dest_dir: Path,
     label: str,
     progress_offset: int,
@@ -165,7 +225,7 @@ async def _download_and_extract_archive(
     Args:
         client: httpx.AsyncClient
         url: URL of the .tar.gz archive
-        sha256_url: URL of the .sha256 checksum file (optional)
+        archive_name: Archive file name
         dest_dir: Directory to extract into
         label: Human-readable label for progress updates
         progress_offset: Byte offset for progress reporting (when downloading
@@ -173,118 +233,89 @@ async def _download_and_extract_archive(
         total_size: Total bytes across all downloads (for progress bar)
     """
     progress = get_progress_manager()
-    cache_path = dest_dir / f".download-{label.replace(' ', '-')}.tmp"
+    cache_path = _get_archive_cache_path(dest_dir, label)
     temp_path = cache_path.with_suffix(cache_path.suffix + ".part")
 
-    # Fetch expected checksum (fail-fast: never extract an unverified archive)
-    expected_sha = None
-    if sha256_url:
+    local_path, local_source = _find_local_archive_source(archive_name, cache_path)
+    if local_path is not None:
         try:
-            sha_resp = await client.get(sha256_url)
-            sha_resp.raise_for_status()
-            expected_sha = sha_resp.text.strip().split()[0]
-            logger.info(f"{label}: expected SHA-256: {expected_sha[:16]}...")
-        except Exception as e:
-            raise RuntimeError(f"{label}: failed to fetch checksum from {sha256_url}") from e
-
-    # Prefer cache when available and valid; otherwise stream download into cache.
-    downloaded = 0
-    archive_path = cache_path
-    if cache_path.exists():
-        downloaded = cache_path.stat().st_size
-        if expected_sha:
+            if local_source != "cache":
+                progress.update_progress(
+                    PROGRESS_KEY,
+                    current=progress_offset,
+                    total=total_size,
+                    filename=f"Preparing local {label} package ({local_source})",
+                    status="downloading",
+                )
+                if temp_path.exists():
+                    temp_path.unlink()
+                shutil.copyfile(local_path, temp_path)
+                temp_path.replace(cache_path)
+                local_path = cache_path
+            local_size = local_path.stat().st_size
+            progress.update_progress(
+                PROGRESS_KEY,
+                current=progress_offset + local_size,
+                total=total_size,
+                filename=f"Using {label} from {local_source}",
+                status="downloading",
+            )
+            _extract_archive(local_path, dest_dir, label, progress_offset, total_size, local_size)
+            logger.info("%s: extracted from local source (%s): %s", label, local_source, local_path)
+            return local_size
+        except Exception as local_error:
+            # Prefer cleaning staged cache copies to avoid deleting release artifacts.
+            if temp_path.exists():
+                temp_path.unlink()
+            if cache_path.exists():
+                cache_path.unlink(missing_ok=True)
+            logger.warning(
+                "%s: local source (%s) failed (%s). Falling back to GitHub download.",
+                label,
+                local_source,
+                local_error,
+            )
             progress.update_progress(
                 PROGRESS_KEY,
                 current=progress_offset,
                 total=total_size,
-                filename=f"Verifying cached {label} archive...",
+                filename=f"Local {label} package failed; downloading fallback",
                 status="downloading",
             )
-            actual = _sha256_file(cache_path)
-            if actual == expected_sha:
-                progress.update_progress(
-                    PROGRESS_KEY,
-                    current=progress_offset + downloaded,
-                    total=total_size,
-                    filename=f"Using cached {label} archive",
-                    status="downloading",
-                )
-                logger.info("%s: using cached archive %s", label, cache_path)
-            else:
-                logger.warning(
-                    "%s: cached archive checksum mismatch, re-downloading (%s != %s)",
-                    label,
-                    actual[:16],
-                    expected_sha[:16],
-                )
-                cache_path.unlink(missing_ok=True)
-                downloaded = 0
 
-    # Stream download, verify, and cache when needed
+    downloaded = 0
     try:
-        if not cache_path.exists():
-            # Clean up leftover partial download
-            if temp_path.exists():
-                temp_path.unlink()
+        if temp_path.exists():
+            temp_path.unlink()
 
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
-                with open(temp_path, "wb") as f:
-                    async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        progress.update_progress(
-                            PROGRESS_KEY,
-                            current=progress_offset + downloaded,
-                            total=total_size,
-                            filename=f"Downloading {label}",
-                            status="downloading",
-                        )
-
-            # Verify integrity
-            if expected_sha:
-                progress.update_progress(
-                    PROGRESS_KEY,
-                    current=progress_offset + downloaded,
-                    total=total_size,
-                    filename=f"Verifying {label}...",
-                    status="downloading",
-                )
-                actual = _sha256_file(temp_path)
-                if actual != expected_sha:
-                    raise ValueError(
-                        f"{label} integrity check failed: expected {expected_sha[:16]}..., got {actual[:16]}..."
+        async with client.stream("GET", url) as response:
+            response.raise_for_status()
+            with open(temp_path, "wb") as f:
+                async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    progress.update_progress(
+                        PROGRESS_KEY,
+                        current=progress_offset + downloaded,
+                        total=total_size,
+                        filename=f"Downloading {label} from github",
+                        status="downloading",
                     )
-                logger.info("%s: integrity verified", label)
 
-            temp_path.replace(cache_path)
-            archive_path = cache_path
-            logger.info("%s: cached archive saved at %s", label, cache_path)
-
-        # Extract (use data filter for path traversal protection on Python 3.12+)
-        progress.update_progress(
-            PROGRESS_KEY,
-            current=progress_offset + downloaded,
-            total=total_size,
-            filename=f"Extracting {label}...",
-            status="downloading",
-        )
-        with tarfile.open(archive_path, "r:gz") as tar:
-            if sys.version_info >= (3, 12):
-                tar.extractall(path=dest_dir, filter="data")
-            else:
-                tar.extractall(path=dest_dir)
-
-        logger.info(f"{label}: extracted to {dest_dir}")
+        temp_path.replace(cache_path)
+        logger.info("%s: downloaded from github and cached at %s", label, cache_path)
+        _extract_archive(cache_path, dest_dir, label, progress_offset, total_size, downloaded)
+        logger.info("%s: extracted to %s", label, dest_dir)
     finally:
         if temp_path.exists():
             temp_path.unlink()
-    if downloaded == 0 and archive_path.exists():
-        downloaded = archive_path.stat().st_size
+
+    if downloaded == 0 and cache_path.exists():
+        downloaded = cache_path.stat().st_size
     return downloaded
 
 
-async def download_cuda_binary(version: Optional[str] = None):
+async def download_cuda_binary(version: str | None = None):
     """Download the CUDA backend (server core + CUDA libs if needed).
 
     Downloads both archives from GitHub Releases, extracts them into
@@ -304,7 +335,7 @@ async def download_cuda_binary(version: Optional[str] = None):
         await _download_cuda_binary_locked(version)
 
 
-async def _download_cuda_binary_locked(version: Optional[str] = None):
+async def _download_cuda_binary_locked(version: str | None = None):
     """Inner implementation of download_cuda_binary, called under _download_lock."""
     import httpx
 
@@ -343,17 +374,27 @@ async def _download_cuda_binary_locked(version: Optional[str] = None):
             # Estimate total download size
             total_size = 0
             if need_server:
-                try:
-                    head = await client.head(f"{base_url}/{server_archive}")
-                    total_size += int(head.headers.get("content-length", 0))
-                except Exception:
-                    pass
+                server_cache = _get_archive_cache_path(cuda_dir, "CUDA server")
+                server_local, _ = _find_local_archive_source(server_archive, server_cache)
+                if server_local is not None:
+                    total_size += server_local.stat().st_size
+                else:
+                    try:
+                        head = await client.head(f"{base_url}/{server_archive}")
+                        total_size += int(head.headers.get("content-length", 0))
+                    except Exception:
+                        pass
             if need_libs:
-                try:
-                    head = await client.head(f"{base_url}/{libs_archive}")
-                    total_size += int(head.headers.get("content-length", 0))
-                except Exception:
-                    pass
+                libs_cache = _get_archive_cache_path(cuda_dir, "CUDA libraries")
+                libs_local, _ = _find_local_archive_source(libs_archive, libs_cache)
+                if libs_local is not None:
+                    total_size += libs_local.stat().st_size
+                else:
+                    try:
+                        head = await client.head(f"{base_url}/{libs_archive}")
+                        total_size += int(head.headers.get("content-length", 0))
+                    except Exception:
+                        pass
 
             logger.info(f"Total download size: {total_size / 1024 / 1024:.1f} MB")
 
@@ -364,7 +405,7 @@ async def _download_cuda_binary_locked(version: Optional[str] = None):
                 server_downloaded = await _download_and_extract_archive(
                     client,
                     url=f"{base_url}/{server_archive}",
-                    sha256_url=f"{base_url}/{server_archive}.sha256",
+                    archive_name=server_archive,
                     dest_dir=cuda_dir,
                     label="CUDA server",
                     progress_offset=offset,
@@ -382,7 +423,7 @@ async def _download_cuda_binary_locked(version: Optional[str] = None):
                 await _download_and_extract_archive(
                     client,
                     url=f"{base_url}/{libs_archive}",
-                    sha256_url=f"{base_url}/{libs_archive}.sha256",
+                    archive_name=libs_archive,
                     dest_dir=cuda_dir,
                     label="CUDA libraries",
                     progress_offset=offset,
@@ -402,7 +443,7 @@ async def _download_cuda_binary_locked(version: Optional[str] = None):
         raise
 
 
-def get_cuda_binary_version() -> Optional[str]:
+def get_cuda_binary_version() -> str | None:
     """Get the version of the installed CUDA binary, or None if not installed."""
     import subprocess
 
