@@ -24,7 +24,7 @@ import { Toaster } from '@/components/ui/toaster';
 import { VoicesTab } from '@/components/VoicesTab/VoicesTab';
 import { useGenerationProgress } from '@/lib/hooks/useGenerationProgress';
 import { useModelDownloadToast } from '@/lib/hooks/useModelDownloadToast';
-import { MODEL_DISPLAY_NAMES, useRestoreActiveTasks } from '@/lib/hooks/useRestoreActiveTasks';
+import { getModelDisplayName, useRestoreActiveTasks } from '@/lib/hooks/useRestoreActiveTasks';
 
 // Simple platform check that works in both web and Tauri
 const isMacOS = () => navigator.platform.toLowerCase().includes('mac');
@@ -51,7 +51,7 @@ function RootLayout() {
 
       {/* Show download toasts for any active downloads (from anywhere) */}
       {activeDownloads.map((download) => {
-        const displayName = MODEL_DISPLAY_NAMES[download.model_name] || download.model_name;
+        const displayName = getModelDisplayName(download.model_name);
         return (
           <DownloadToastRestorer
             key={download.model_name}

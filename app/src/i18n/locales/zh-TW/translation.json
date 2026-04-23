@@ -838,7 +838,8 @@
     "source": {
       "label": "輸入來源",
       "upload": "上傳檔案",
-      "sample": "語音檔案樣本"
+      "sample": "語音檔案樣本",
+      "history": "複製列表"
     },
     "upload": {
       "label": "音訊檔案",
@@ -850,6 +851,11 @@
       "emptyProfiles": "目前沒有可用的語音檔案",
       "emptySamples": "此語音檔案沒有樣本",
       "sampleLabel": "樣本 {{index}}"
+    },
+    "history": {
+      "generation": "歷史複製音訊",
+      "empty": "歷史中沒有可用的已完成記錄",
+      "hint": "從 /history 選擇一筆已完成記錄。"
     },
     "options": {
       "language": "語言",
@@ -879,6 +885,7 @@
     "toast": {
       "fileRequired": "請選擇音訊檔案。",
       "sampleRequired": "請選擇語音檔案樣本。",
+      "historyRequired": "請選擇一筆複製歷史記錄。",
       "failed": "轉寫失敗",
       "exportFailed": "匯出失敗",
       "modelReady": "模型下載完成",

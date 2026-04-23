@@ -838,7 +838,8 @@
     "source": {
       "label": "Source",
       "upload": "Upload File",
-      "sample": "Voice Sample"
+      "sample": "Voice Sample",
+      "history": "Clone List"
     },
     "upload": {
       "label": "Audio File",
@@ -850,6 +851,11 @@
       "emptyProfiles": "No profiles available",
       "emptySamples": "No samples in this profile",
       "sampleLabel": "Sample {{index}}"
+    },
+    "history": {
+      "generation": "Clone History",
+      "empty": "No completed generations in history",
+      "hint": "Select a completed generation from /history."
     },
     "options": {
       "language": "Language",
@@ -879,6 +885,7 @@
     "toast": {
       "fileRequired": "Please choose an audio file.",
       "sampleRequired": "Please choose a profile sample.",
+      "historyRequired": "Please choose a cloned generation.",
       "failed": "Transcription failed",
       "exportFailed": "Export failed",
       "modelReady": "Model download complete",

@@ -1,6 +1,7 @@
 """Transcription endpoints."""
 
 import asyncio
+import re
 import tempfile
 from pathlib import Path
 
@@ -9,14 +10,17 @@ from sqlalchemy.orm import Session
 
 from .. import config, models
 from ..backends import WHISPER_HF_REPOS
-from ..database import ProfileSample as DBProfileSample, get_db
-from ..services import transcribe
+from ..database import Generation as DBGeneration, ProfileSample as DBProfileSample, get_db
+from ..services import punctuation, transcribe
 from ..services.task_queue import create_background_task
+from ..utils.progress import get_progress_manager
 from ..utils.tasks import get_task_manager
 
 router = APIRouter()
 
 UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1MB
+_CJK_CHAR_RE = re.compile(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+_PUNCTUATION_RE = re.compile(r"[\u3001\u3002\uff0c\uff01\uff1f\uff1b\uff1a,.!?;:]")
 
 
 async def _write_upload_to_temp_file(file: UploadFile) -> Path:
@@ -82,9 +86,78 @@ async def _ensure_whisper_model_ready(whisper_model, model_size: str) -> None:
     )
 
 
+def _contains_cjk(text: str) -> bool:
+    return bool(_CJK_CHAR_RE.search(text))
+
+
+def _contains_punctuation(text: str) -> bool:
+    return bool(_PUNCTUATION_RE.search(text))
+
+
+def _should_restore_punctuation(language: str | None, text: str) -> bool:
+    if not config.ENABLE_PUNCTUATION_RESTORATION:
+        return False
+
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    # If punctuation already exists, skip restoration.
+    if _contains_punctuation(stripped):
+        return False
+
+    normalized_language = (language or "").strip().lower()
+    if normalized_language == "zh":
+        return True
+    if normalized_language in ("", "auto"):
+        return _contains_cjk(stripped)
+    return False
+
+
+async def _ensure_punctuation_model_ready(punctuation_restorer) -> None:
+    """Ensure punctuation model is loaded or trigger download task + 202 response."""
+    already_loaded = punctuation_restorer.is_loaded()
+    if already_loaded or punctuation_restorer.is_model_cached():
+        return
+
+    progress_model_name = punctuation.PUNCTUATION_MODEL_NAME
+    task_manager = get_task_manager()
+    progress_manager = get_progress_manager()
+
+    async def download_punctuation_background():
+        try:
+            await punctuation_restorer.download_model_async()
+            progress_manager.mark_complete(progress_model_name)
+            task_manager.complete_download(progress_model_name)
+        except Exception as e:
+            progress_manager.mark_error(progress_model_name, str(e))
+            task_manager.error_download(progress_model_name, str(e))
+
+    if not task_manager.is_download_active(progress_model_name):
+        task_manager.start_download(progress_model_name)
+        progress_manager.update_progress(
+            model_name=progress_model_name,
+            current=0,
+            total=0,
+            filename="Connecting to ModelScope...",
+            status="downloading",
+        )
+        create_background_task(download_punctuation_background())
+
+    raise HTTPException(
+        status_code=202,
+        detail={
+            "message": "Punctuation model is being downloaded. Please wait and try again.",
+            "model_name": progress_model_name,
+            "downloading": True,
+        },
+    )
+
+
 async def _resolve_subtitle_source(
     file: UploadFile | None,
     sample_id: str | None,
+    generation_id: str | None,
     db: Session,
 ) -> tuple[Path, bool]:
     """
@@ -93,17 +166,26 @@ async def _resolve_subtitle_source(
     Returns:
         (audio_path, should_cleanup)
     """
-    has_file = file is not None
-    has_sample = bool(sample_id)
-
-    if has_file == has_sample:
+    source_count = sum(1 for value in (file is not None, bool(sample_id), bool(generation_id)) if value)
+    if source_count != 1:
         raise HTTPException(
             status_code=400,
-            detail="Exactly one of 'file' or 'sample_id' must be provided.",
+            detail="Exactly one of 'file', 'sample_id', or 'generation_id' must be provided.",
         )
 
     if file is not None:
         return await _write_upload_to_temp_file(file), True
+
+    if generation_id:
+        generation = db.query(DBGeneration).filter_by(id=generation_id).first()
+        if not generation:
+            raise HTTPException(status_code=404, detail="Generation not found")
+
+        generation_audio_path = config.resolve_storage_path(generation.audio_path)
+        if generation_audio_path is None or not generation_audio_path.exists():
+            raise HTTPException(status_code=404, detail="Generation audio file not found")
+
+        return generation_audio_path, False
 
     sample = db.query(DBProfileSample).filter_by(id=sample_id).first()
     if not sample:
@@ -131,6 +213,14 @@ async def transcribe_audio(
         await _ensure_whisper_model_ready(whisper_model, model_size)
         text = await whisper_model.transcribe(str(tmp_path), language, model_size)
 
+        if _should_restore_punctuation(language, text):
+            punctuation_restorer = punctuation.get_punctuation_restorer()
+            await _ensure_punctuation_model_ready(punctuation_restorer)
+            try:
+                text = await punctuation_restorer.restore_text(text)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Punctuation restoration failed: {e}") from e
+
         return models.TranscriptionResponse(
             text=text,
             duration=duration,
@@ -148,12 +238,13 @@ async def transcribe_audio(
 async def transcribe_subtitles(
     file: UploadFile | None = File(None),
     sample_id: str | None = Form(None),
+    generation_id: str | None = Form(None),
     language: str | None = Form(None),
     model: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
     """Transcribe audio and return subtitle segments."""
-    source_path, should_cleanup = await _resolve_subtitle_source(file, sample_id, db)
+    source_path, should_cleanup = await _resolve_subtitle_source(file, sample_id, generation_id, db)
 
     try:
         duration = await _get_audio_duration(source_path)
@@ -165,10 +256,45 @@ async def transcribe_subtitles(
         except NotImplementedError as e:
             raise HTTPException(status_code=501, detail=str(e)) from e
 
+        text = str(detailed["text"])
+        segments = [models.TranscriptionSegment(**segment) for segment in detailed["segments"]]
+
+        detection_text = text.strip() or "".join(segment.text for segment in segments)
+        text_source = text.strip() or detection_text
+        text_needs_restore = _should_restore_punctuation(language, text_source)
+        segment_indices_to_restore = [
+            idx for idx, segment in enumerate(segments) if _should_restore_punctuation(language, segment.text)
+        ]
+
+        if text_needs_restore or segment_indices_to_restore:
+            punctuation_restorer = punctuation.get_punctuation_restorer()
+            await _ensure_punctuation_model_ready(punctuation_restorer)
+            try:
+                if text_needs_restore and text_source:
+                    text = await punctuation_restorer.restore_text(text_source)
+
+                if segment_indices_to_restore:
+                    subset = [segments[idx] for idx in segment_indices_to_restore]
+                    restored_segments = await punctuation_restorer.restore_segments(
+                        [
+                            {
+                                "index": segment.index,
+                                "start": segment.start,
+                                "end": segment.end,
+                                "text": segment.text,
+                            }
+                            for segment in subset
+                        ]
+                    )
+                    for idx, restored in zip(segment_indices_to_restore, restored_segments, strict=False):
+                        segments[idx] = models.TranscriptionSegment(**restored)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Punctuation restoration failed: {e}") from e
+
         return models.TranscriptionSubtitlesResponse(
-            text=detailed["text"],
+            text=text,
             duration=duration,
-            segments=[models.TranscriptionSegment(**segment) for segment in detailed["segments"]],
+            segments=segments,
         )
     except HTTPException:
         raise

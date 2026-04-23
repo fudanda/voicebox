@@ -21,23 +21,19 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
 import { apiClient } from '@/lib/api/client';
-import type {
-  TranscriptionSubtitlesResponse,
-  WhisperModelSize,
-} from '@/lib/api/types';
-import {
-  LANGUAGE_OPTIONS,
-  type LanguageCode,
-} from '@/lib/constants/languages';
+import type { TranscriptionSubtitlesResponse, WhisperModelSize } from '@/lib/api/types';
+import { LANGUAGE_OPTIONS, type LanguageCode } from '@/lib/constants/languages';
 import { BOTTOM_SAFE_AREA_PADDING } from '@/lib/constants/ui';
+import { useHistory } from '@/lib/hooks/useHistory';
 import { useModelDownloadToast } from '@/lib/hooks/useModelDownloadToast';
 import { useProfileSamples, useProfiles } from '@/lib/hooks/useProfiles';
+import { getModelDisplayName } from '@/lib/hooks/useRestoreActiveTasks';
 import { usePlatform } from '@/platform/PlatformContext';
 import { usePlayerStore } from '@/stores/playerStore';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-type SourceMode = 'upload' | 'sample';
+type SourceMode = 'upload' | 'sample' | 'history';
 type LanguageSelection = LanguageCode | 'auto';
 
 const WHISPER_MODELS: WhisperModelSize[] = ['base', 'small', 'medium', 'large', 'turbo'];
@@ -105,6 +101,7 @@ export function TranscriptionTab() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string>('');
   const [selectedSampleId, setSelectedSampleId] = useState<string>('');
+  const [selectedGenerationId, setSelectedGenerationId] = useState<string>('');
   const [language, setLanguage] = useState<LanguageSelection>('auto');
   const [model, setModel] = useState<WhisperModelSize>('base');
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -114,6 +111,11 @@ export function TranscriptionTab() {
 
   const { data: profiles = [] } = useProfiles();
   const { data: samples = [] } = useProfileSamples(selectedProfileId);
+  const { data: historyData } = useHistory({ limit: 100 });
+  const completedGenerations = useMemo(
+    () => (historyData?.items ?? []).filter((item) => item.status === 'completed'),
+    [historyData],
+  );
 
   useEffect(() => {
     if (!selectedProfileId && profiles.length > 0) {
@@ -131,9 +133,22 @@ export function TranscriptionTab() {
     }
   }, [samples, selectedSampleId]);
 
+  useEffect(() => {
+    if (!completedGenerations.length) {
+      setSelectedGenerationId('');
+      return;
+    }
+    if (
+      !selectedGenerationId ||
+      !completedGenerations.some((generation) => generation.id === selectedGenerationId)
+    ) {
+      setSelectedGenerationId(completedGenerations[0].id);
+    }
+  }, [completedGenerations, selectedGenerationId]);
+
   useModelDownloadToast({
     modelName: downloadingModelName ?? '',
-    displayName: downloadingModelName ?? '',
+    displayName: downloadingModelName ? getModelDisplayName(downloadingModelName) : '',
     enabled: !!downloadingModelName,
     onComplete: () => {
       setDownloadingModelName(null);
@@ -169,6 +184,14 @@ export function TranscriptionTab() {
       return;
     }
 
+    if (sourceMode === 'history' && !selectedGenerationId) {
+      toast({
+        title: t('transcription.toast.historyRequired'),
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setIsTranscribing(true);
     setErrorMessage(null);
 
@@ -176,6 +199,7 @@ export function TranscriptionTab() {
       const response = await apiClient.transcribeSubtitles({
         file: sourceMode === 'upload' ? selectedFile ?? undefined : undefined,
         sampleId: sourceMode === 'sample' ? selectedSampleId : undefined,
+        generationId: sourceMode === 'history' ? selectedGenerationId : undefined,
         language: language === 'auto' ? undefined : language,
         model,
       });
@@ -189,8 +213,7 @@ export function TranscriptionTab() {
           description: t('transcription.toast.downloadingDescription'),
         });
       } else {
-        const message =
-          error instanceof Error ? error.message : t('common.unknownError');
+        const message = error instanceof Error ? error.message : t('common.unknownError');
         setErrorMessage(message);
         toast({
           title: t('transcription.toast.failed'),
@@ -229,14 +252,11 @@ export function TranscriptionTab() {
     const blob = new Blob([content], { type: mimeType });
 
     try {
-      await platform.filesystem.saveFile(filename, blob, [
-        { name: filterName, extensions: [format] },
-      ]);
+      await platform.filesystem.saveFile(filename, blob, [{ name: filterName, extensions: [format] }]);
     } catch (error) {
       toast({
         title: t('transcription.toast.exportFailed'),
-        description:
-          error instanceof Error ? error.message : t('common.unknownError'),
+        description: error instanceof Error ? error.message : t('common.unknownError'),
         variant: 'destructive',
       });
     }
@@ -260,7 +280,7 @@ export function TranscriptionTab() {
             <CardDescription>{t('transcription.subtitle')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 overflow-y-auto">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <Button
                 variant={sourceMode === 'upload' ? 'default' : 'outline'}
                 onClick={() => setSourceMode('upload')}
@@ -272,6 +292,12 @@ export function TranscriptionTab() {
                 onClick={() => setSourceMode('sample')}
               >
                 {t('transcription.source.sample')}
+              </Button>
+              <Button
+                variant={sourceMode === 'history' ? 'default' : 'outline'}
+                onClick={() => setSourceMode('history')}
+              >
+                {t('transcription.source.history')}
               </Button>
             </div>
 
@@ -286,7 +312,7 @@ export function TranscriptionTab() {
                 />
                 <p className="text-xs text-muted-foreground">{t('transcription.upload.hint')}</p>
               </div>
-            ) : (
+            ) : sourceMode === 'sample' ? (
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label>{t('transcription.sample.profile')}</Label>
@@ -322,14 +348,35 @@ export function TranscriptionTab() {
                   </Select>
                 </div>
               </div>
+            ) : (
+              <div className="space-y-2">
+                <Label>{t('transcription.history.generation')}</Label>
+                <Select value={selectedGenerationId} onValueChange={setSelectedGenerationId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={t('transcription.history.empty')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {completedGenerations.map((generation) => {
+                      const preview = generation.text.trim();
+                      const previewText = preview.length > 60 ? `${preview.slice(0, 60)}...` : preview;
+                      const label = previewText
+                        ? `${generation.profile_name} · ${previewText}`
+                        : generation.profile_name;
+                      return (
+                        <SelectItem key={generation.id} value={generation.id}>
+                          {label}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{t('transcription.history.hint')}</p>
+              </div>
             )}
 
             <div className="space-y-2">
               <Label>{t('transcription.options.language')}</Label>
-              <Select
-                value={language}
-                onValueChange={(value) => setLanguage(value as LanguageSelection)}
-              >
+              <Select value={language} onValueChange={(value) => setLanguage(value as LanguageSelection)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -361,14 +408,10 @@ export function TranscriptionTab() {
             </div>
 
             <Button className="w-full" onClick={runTranscription} disabled={isTranscribing}>
-              {isTranscribing
-                ? t('transcription.actions.transcribing')
-                : t('transcription.actions.transcribe')}
+              {isTranscribing ? t('transcription.actions.transcribing') : t('transcription.actions.transcribe')}
             </Button>
 
-            {errorMessage && (
-              <p className="text-sm text-destructive">{errorMessage}</p>
-            )}
+            {errorMessage && <p className="text-sm text-destructive">{errorMessage}</p>}
           </CardContent>
         </Card>
 
@@ -379,41 +422,22 @@ export function TranscriptionTab() {
               {result && (
                 <div className="flex items-center gap-2">
                   <Badge variant="outline">
-                    {t('transcription.result.duration', {
-                      seconds: result.duration.toFixed(2),
-                    })}
+                    {t('transcription.result.duration', { seconds: result.duration.toFixed(2) })}
                   </Badge>
                   <Badge variant="outline">
-                    {t('transcription.result.segments', {
-                      count: result.segments.length,
-                    })}
+                    {t('transcription.result.segments', { count: result.segments.length })}
                   </Badge>
                 </div>
               )}
             </div>
             <div className="flex items-center gap-2 pt-1">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!result}
-                onClick={() => exportResult('txt')}
-              >
+              <Button variant="outline" size="sm" disabled={!result} onClick={() => exportResult('txt')}>
                 {t('transcription.export.txt')}
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!result}
-                onClick={() => exportResult('srt')}
-              >
+              <Button variant="outline" size="sm" disabled={!result} onClick={() => exportResult('srt')}>
                 {t('transcription.export.srt')}
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!result}
-                onClick={() => exportResult('vtt')}
-              >
+              <Button variant="outline" size="sm" disabled={!result} onClick={() => exportResult('vtt')}>
                 {t('transcription.export.vtt')}
               </Button>
             </div>

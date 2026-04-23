@@ -838,7 +838,8 @@
     "source": {
       "label": "入力ソース",
       "upload": "ファイルをアップロード",
-      "sample": "音声プロファイルサンプル"
+      "sample": "音声プロファイルサンプル",
+      "history": "クローン一覧"
     },
     "upload": {
       "label": "音声ファイル",
@@ -850,6 +851,11 @@
       "emptyProfiles": "利用可能なプロファイルがありません",
       "emptySamples": "このプロファイルにはサンプルがありません",
       "sampleLabel": "サンプル {{index}}"
+    },
+    "history": {
+      "generation": "履歴クローン音声",
+      "empty": "履歴に完了済みの生成がありません",
+      "hint": "/history から完了済み生成を選択してください。"
     },
     "options": {
       "language": "言語",
@@ -879,6 +885,7 @@
     "toast": {
       "fileRequired": "音声ファイルを選択してください。",
       "sampleRequired": "プロファイルサンプルを選択してください。",
+      "historyRequired": "クローン履歴を選択してください。",
       "failed": "文字起こしに失敗しました",
       "exportFailed": "エクスポートに失敗しました",
       "modelReady": "モデルのダウンロードが完了しました",

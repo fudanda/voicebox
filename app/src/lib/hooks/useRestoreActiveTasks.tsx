@@ -84,4 +84,9 @@ export const MODEL_DISPLAY_NAMES: Record<string, string> = {
   'whisper-small': 'Whisper Small',
   'whisper-medium': 'Whisper Medium',
   'whisper-large': 'Whisper Large',
+  'punc-ct-transformer-zh-cn': 'CT-Transformer Punctuation (ZH)',
 };
+
+export function getModelDisplayName(modelName: string): string {
+  return MODEL_DISPLAY_NAMES[modelName] || modelName;
+}

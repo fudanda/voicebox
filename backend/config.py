@@ -10,6 +10,19 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    """Parse boolean-like environment flags."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Toggle for Whisper post-processing punctuation restoration.
+# Set VOICEBOX_ENABLE_PUNCTUATION_RESTORATION=0 to disable globally.
+ENABLE_PUNCTUATION_RESTORATION = _env_flag("VOICEBOX_ENABLE_PUNCTUATION_RESTORATION", True)
+
 # Allow users to override the HuggingFace model download directory.
 # Set VOICEBOX_MODELS_DIR to an absolute path before starting the server.
 # This sets HF_HUB_CACHE so all huggingface_hub downloads go to that path.

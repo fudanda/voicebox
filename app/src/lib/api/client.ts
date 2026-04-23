@@ -406,16 +406,20 @@ class ApiClient {
   async transcribeSubtitles({
     file,
     sampleId,
+    generationId,
     language,
     model,
   }: {
     file?: File;
     sampleId?: string;
+    generationId?: string;
     language?: LanguageCode;
     model?: WhisperModelSize;
   }): Promise<TranscriptionSubtitlesResponse> {
-    if ((!file && !sampleId) || (file && sampleId)) {
-      throw new Error('Exactly one of file or sampleId must be provided.');
+    const sourceCount = [Boolean(file), Boolean(sampleId), Boolean(generationId)].filter(Boolean)
+      .length;
+    if (sourceCount !== 1) {
+      throw new Error('Exactly one of file, sampleId, or generationId must be provided.');
     }
 
     const formData = new FormData();
@@ -424,6 +428,9 @@ class ApiClient {
     }
     if (sampleId) {
       formData.append('sample_id', sampleId);
+    }
+    if (generationId) {
+      formData.append('generation_id', generationId);
     }
     if (language) {
       formData.append('language', language);

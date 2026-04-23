@@ -838,7 +838,8 @@
     "source": {
       "label": "输入来源",
       "upload": "上传文件",
-      "sample": "语音档案样本"
+      "sample": "语音档案样本",
+      "history": "克隆列表"
     },
     "upload": {
       "label": "音频文件",
@@ -850,6 +851,11 @@
       "emptyProfiles": "暂无语音档案",
       "emptySamples": "当前语音档案没有样本",
       "sampleLabel": "样本 {{index}}"
+    },
+    "history": {
+      "generation": "历史克隆音频",
+      "empty": "历史中没有可用的已完成记录",
+      "hint": "从 /history 里选择一条已完成记录。"
     },
     "options": {
       "language": "语言",
@@ -879,6 +885,7 @@
     "toast": {
       "fileRequired": "请选择音频文件。",
       "sampleRequired": "请选择语音档案样本。",
+      "historyRequired": "请选择一条克隆历史记录。",
       "failed": "转写失败",
       "exportFailed": "导出失败",
       "modelReady": "模型下载完成",

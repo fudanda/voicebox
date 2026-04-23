@@ -5,6 +5,7 @@
 export type Body_transcribe_subtitles_transcribe_subtitles_post = {
     file?: (string | null);
     sample_id?: (string | null);
+    generation_id?: (string | null);
     language?: (string | null);
     model?: (string | null);
 };

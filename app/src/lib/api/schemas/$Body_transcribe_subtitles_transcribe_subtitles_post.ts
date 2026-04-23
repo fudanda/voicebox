@@ -20,6 +20,14 @@ export const $Body_transcribe_subtitles_transcribe_subtitles_post = {
                 type: 'null',
             }],
         },
+        generation_id: {
+            type: 'any-of',
+            contains: [{
+                type: 'string',
+            }, {
+                type: 'null',
+            }],
+        },
         language: {
             type: 'any-of',
             contains: [{
