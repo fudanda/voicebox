@@ -116,6 +116,7 @@ export function GpuPage() {
   const [restartPhase, setRestartPhase] = useState<RestartPhase>('idle');
   const [error, setError] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<CudaDownloadProgress | null>(null);
+  const [isStartingDownload, setIsStartingDownload] = useState(false);
   const healthPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Hold the latest `t` in a ref so the CUDA progress SSE effect below doesn't
   // tear down and reconnect the EventSource every time the language changes.
@@ -139,6 +140,8 @@ export function GpuPage() {
   const isCurrentlyCuda = health?.backend_variant === 'cuda';
   const cudaAvailable = cudaStatus?.available ?? false;
   const cudaDownloading = cudaStatus?.downloading ?? false;
+  const isDownloadActive = cudaDownloading || isStartingDownload;
+  const activeDownloadProgress = downloadProgress ?? cudaStatus?.download_progress ?? null;
 
   useEffect(() => {
     return () => {
@@ -150,21 +153,24 @@ export function GpuPage() {
   }, []);
 
   useEffect(() => {
-    if (!cudaDownloading || !serverUrl) return;
+    if (!isDownloadActive || !serverUrl) return;
 
     const eventSource = new EventSource(`${serverUrl}/backend/cuda-progress`);
 
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data) as CudaDownloadProgress;
+        setIsStartingDownload(false);
         setDownloadProgress(data);
 
         if (data.status === 'complete') {
           eventSource.close();
+          setIsStartingDownload(false);
           setDownloadProgress(null);
           refetchCudaStatus();
         } else if (data.status === 'error') {
           eventSource.close();
+          setIsStartingDownload(false);
           setError(data.error || tRef.current('settings.gpu.errors.downloadFailed'));
           setDownloadProgress(null);
           refetchCudaStatus();
@@ -176,12 +182,18 @@ export function GpuPage() {
 
     eventSource.onerror = () => {
       eventSource.close();
+      void refetchCudaStatus().then((result) => {
+        if (!result.data?.downloading) {
+          setIsStartingDownload(false);
+          setDownloadProgress(null);
+        }
+      });
     };
 
     return () => {
       eventSource.close();
     };
-  }, [cudaDownloading, serverUrl, refetchCudaStatus]);
+  }, [isDownloadActive, serverUrl, refetchCudaStatus]);
 
   const clearHealthPolling = useCallback(() => {
     if (healthPollRef.current) {
@@ -190,38 +202,41 @@ export function GpuPage() {
     }
   }, []);
 
-  const startHealthPolling = useCallback((expectedVariant?: 'cuda' | 'cpu') => {
-    clearHealthPolling();
-    let attempts = 0;
+  const startHealthPolling = useCallback(
+    (expectedVariant?: 'cuda' | 'cpu') => {
+      clearHealthPolling();
+      let attempts = 0;
 
-    healthPollRef.current = setInterval(async () => {
-      try {
-        attempts += 1;
-        const result = await apiClient.getHealth();
-        if (result.status === 'healthy') {
-          if (expectedVariant && result.backend_variant !== expectedVariant) {
-            // Give the backend a brief grace period to fully switch variant.
-            if (attempts >= 15) {
-              clearHealthPolling();
-              setRestartPhase('idle');
-              setError(
-                expectedVariant === 'cuda'
-                  ? `Restarted, but server is still using '${result.backend_variant ?? 'unknown'}' backend. If you are running 'just dev', stop the external Python backend first.`
-                  : `Restarted, but server backend is '${result.backend_variant ?? 'unknown'}' (expected 'cpu').`,
-              );
+      healthPollRef.current = setInterval(async () => {
+        try {
+          attempts += 1;
+          const result = await apiClient.getHealth();
+          if (result.status === 'healthy') {
+            if (expectedVariant && result.backend_variant !== expectedVariant) {
+              // Give the backend a brief grace period to fully switch variant.
+              if (attempts >= 15) {
+                clearHealthPolling();
+                setRestartPhase('idle');
+                setError(
+                  expectedVariant === 'cuda'
+                    ? `Restarted, but server is still using '${result.backend_variant ?? 'unknown'}' backend. If you are running 'just dev', stop the external Python backend first.`
+                    : `Restarted, but server backend is '${result.backend_variant ?? 'unknown'}' (expected 'cpu').`,
+                );
+              }
+              return;
             }
-            return;
+            clearHealthPolling();
+            setRestartPhase('ready');
+            queryClient.invalidateQueries();
+            setTimeout(() => setRestartPhase('idle'), 2000);
           }
-          clearHealthPolling();
-          setRestartPhase('ready');
-          queryClient.invalidateQueries();
-          setTimeout(() => setRestartPhase('idle'), 2000);
+        } catch {
+          // Server still down, keep polling
         }
-      } catch {
-        // Server still down, keep polling
-      }
-    }, 1000);
-  }, [queryClient, clearHealthPolling]);
+      }, 1000);
+    },
+    [queryClient, clearHealthPolling],
+  );
 
   const restartServerWithPolling = useCallback(
     async (errorMessage: string, expectedVariant?: 'cuda' | 'cpu') => {
@@ -241,10 +256,25 @@ export function GpuPage() {
 
   const handleDownload = async () => {
     setError(null);
+    setIsStartingDownload(true);
+    setDownloadProgress({
+      model_name: 'cuda-backend',
+      current: 0,
+      total: 0,
+      progress: 0,
+      filename: t('settings.gpu.cuda.downloading'),
+      status: 'downloading',
+      timestamp: new Date().toISOString(),
+    });
     try {
       await apiClient.downloadCudaBackend();
       refetchCudaStatus();
+      setTimeout(() => {
+        refetchCudaStatus();
+      }, 500);
     } catch (e: unknown) {
+      setIsStartingDownload(false);
+      setDownloadProgress(null);
       const msg = e instanceof Error ? e.message : t('settings.gpu.errors.downloadStart');
       if (msg.includes('already downloaded')) {
         refetchCudaStatus();
@@ -310,21 +340,21 @@ export function GpuPage() {
           title={t('settings.gpu.cuda.title')}
           description={t('settings.gpu.cuda.description')}
         >
-          {cudaDownloading && downloadProgress && (
+          {isDownloadActive && activeDownloadProgress && (
             <SettingRow title={t('settings.gpu.cuda.downloading')}>
               <div className="space-y-1.5">
-                <Progress value={downloadProgress.progress} className="h-2" />
+                <Progress value={activeDownloadProgress.progress} className="h-2" />
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>
-                    {downloadProgress.filename ||
+                    {activeDownloadProgress.filename ||
                       (cudaAvailable
                         ? t('settings.gpu.cuda.updating')
                         : t('settings.gpu.cuda.downloadingShort'))}
                   </span>
                   <span>
-                    {downloadProgress.total > 0
-                      ? `${formatBytes(downloadProgress.current)} / ${formatBytes(downloadProgress.total)}`
-                      : `${downloadProgress.progress.toFixed(1)}%`}
+                    {activeDownloadProgress.total > 0
+                      ? `${formatBytes(activeDownloadProgress.current)} / ${formatBytes(activeDownloadProgress.total)}`
+                      : `${activeDownloadProgress.progress.toFixed(1)}%`}
                   </span>
                 </div>
               </div>
@@ -353,7 +383,7 @@ export function GpuPage() {
             </SettingRow>
           )}
 
-          {restartPhase === 'idle' && !cudaDownloading && (
+          {restartPhase === 'idle' && !isDownloadActive && (
             <>
               {!cudaAvailable && !isCurrentlyCuda && (
                 <SettingRow

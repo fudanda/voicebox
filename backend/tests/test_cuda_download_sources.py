@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tarfile
 from pathlib import Path
 
@@ -169,6 +170,68 @@ async def test_download_prefers_install_dir_archive_in_frozen_mode(monkeypatch: 
 
 
 @pytest.mark.asyncio
+async def test_local_archive_copy_and_extract_emit_progress_updates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    """Local archive usage should emit visible copy + extract progress events."""
+
+    class _Recorder:
+        def __init__(self):
+            self.updates: list[dict] = []
+
+        def update_progress(self, model_name: str, current: int, total: int, **kwargs):
+            self.updates.append(
+                {
+                    "model_name": model_name,
+                    "current": current,
+                    "total": total,
+                    **kwargs,
+                }
+            )
+
+        def get_progress(self, _model_name: str):
+            return None
+
+        def mark_complete(self, model_name: str):
+            self.updates.append({"model_name": model_name, "status": "complete"})
+
+        def mark_error(self, model_name: str, error: str):
+            self.updates.append({"model_name": model_name, "status": "error", "error": error})
+
+    recorder = _Recorder()
+    _patch_common_runtime(monkeypatch, tmp_path, need_server=True, need_libs=False)
+    repo_root = tmp_path / "repo"
+    monkeypatch.setattr(cuda, "_is_frozen_runtime", lambda: False)
+    monkeypatch.setattr(cuda, "_get_repo_root", lambda: repo_root)
+    monkeypatch.setattr(cuda, "get_progress_manager", lambda: recorder)
+    monkeypatch.setattr(cuda, "LOCAL_COPY_CHUNK_SIZE", 1024)
+
+    _write_tar(
+        repo_root / "release-assets" / "voicebox-server-cuda.tar.gz",
+        {
+            "voicebox-server-cuda.exe": os.urandom(6 * 1024),
+            "deps/runtime.bin": os.urandom(6 * 1024),
+            "deps/config.json": b"{}",
+        },
+    )
+    _patch_no_network_client(monkeypatch)
+
+    await cuda._download_cuda_binary_locked("v9.9.9")
+
+    copy_updates = [
+        update
+        for update in recorder.updates
+        if (update.get("filename") or "").startswith("Copying local CUDA server package")
+    ]
+    extract_updates = [update for update in recorder.updates if update.get("status") == "extracting"]
+
+    assert len(copy_updates) >= 2
+    assert extract_updates
+    assert any(update.get("status") == "complete" for update in recorder.updates)
+
+
+@pytest.mark.asyncio
 async def test_download_falls_back_to_github_when_local_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """When no local package exists, download should stream from GitHub."""
     data_dir = _patch_common_runtime(monkeypatch, tmp_path, need_server=True, need_libs=False)
@@ -271,3 +334,20 @@ async def test_download_libs_only_writes_manifest_and_preserves_need_flags(
     assert manifest_data["version"] == cuda.CUDA_LIBS_VERSION
     assert all("voicebox-server-cuda.tar.gz" not in url for _, url in calls)
 
+
+def test_get_cuda_status_treats_extracting_as_active(monkeypatch: pytest.MonkeyPatch):
+    """Extracting archives should still be reported as an active CUDA download."""
+
+    class _ProgressStub:
+        def get_progress(self, _model_name: str):
+            return {"status": "extracting", "progress": 42.0}
+
+    monkeypatch.setattr(cuda, "get_progress_manager", lambda: _ProgressStub())
+    monkeypatch.setattr(cuda, "get_cuda_binary_path", lambda: None)
+    monkeypatch.setattr(cuda, "get_installed_cuda_libs_version", lambda: None)
+    monkeypatch.setattr(cuda, "is_cuda_active", lambda: False)
+
+    status = cuda.get_cuda_status()
+
+    assert status["downloading"] is True
+    assert status["download_progress"] == {"status": "extracting", "progress": 42.0}

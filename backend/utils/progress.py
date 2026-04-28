@@ -68,6 +68,7 @@ class ProgressManager:
         total: int,
         filename: Optional[str] = None,
         status: str = "downloading",
+        progress: Optional[float] = None,
     ):
         """
         Update progress for a model download.
@@ -93,7 +94,9 @@ class ProgressManager:
         # This prevents crazy percentages from edge cases like:
         # - current > total temporarily during aggregation
         # - mixing file-count progress with byte-count progress
-        if total > 0:
+        if progress is not None:
+            progress_pct = min(100.0, max(0.0, progress))
+        elif total > 0:
             progress_pct = min(100.0, max(0.0, (current / total * 100)))
         else:
             progress_pct = 0
