@@ -182,6 +182,23 @@ class TranscriptionResponse(BaseModel):
     duration: float
 
 
+class TranscriptionSegment(BaseModel):
+    """Segment-level transcription timestamp."""
+
+    index: int
+    start: float
+    end: float
+    text: str
+
+
+class TranscriptionSubtitlesResponse(BaseModel):
+    """Response model for transcription with subtitle segments."""
+
+    text: str
+    duration: float
+    segments: List[TranscriptionSegment]
+
+
 class RefinementFlagsModel(BaseModel):
     """Boolean toggles that drive the refinement prompt builder."""
 

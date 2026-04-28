@@ -129,6 +129,38 @@ function base64ToFile(base64: string, fileName: string, fileType: string): File 
   return new File([u8arr], fileName, { type: fileType });
 }
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  if (typeof error === 'string' && error.trim()) {
+    return error;
+  }
+  if (error && typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    const detail = record.detail;
+    const reason = record.reason;
+    const message = record.message;
+    const debugDetail =
+      record.debug && typeof record.debug === 'object'
+        ? (record.debug as Record<string, unknown>).details
+        : undefined;
+
+    const candidates = [detail, reason, message, debugDetail]
+      .map((value) => {
+        if (typeof value === 'string') return value.trim();
+        if (value != null) return JSON.stringify(value);
+        return '';
+      })
+      .filter(Boolean);
+
+    if (candidates.length > 0) {
+      return candidates.join(' | ');
+    }
+  }
+  return fallback;
+}
+
 export function ProfileForm() {
   const { t } = useTranslation();
   const platform = usePlatform();
@@ -707,6 +739,12 @@ export function ProfileForm() {
             description: t('profileForm.toast.profileCreatedSample', { name: data.name }),
           });
         } catch (sampleError) {
+          console.error('Voice clone sample upload failed:', {
+            profileId: profile.id,
+            sampleFileName: fileToUpload.name,
+            sampleFileSize: fileToUpload.size,
+            error: sampleError,
+          });
           let rollbackSucceeded = false;
           try {
             await deleteProfile.mutateAsync(profile.id);
@@ -728,8 +766,8 @@ export function ProfileForm() {
           toast({
             title: t('profileForm.toast.sampleFailed'),
             description:
-              sampleError instanceof Error
-                ? `${sampleError.message}${rollbackSuffix}`
+              sampleError
+                ? `${getErrorMessage(sampleError, t('profileForm.toast.sampleFailedDescription'))}${rollbackSuffix}`
                 : rollbackSucceeded
                   ? t('profileForm.toast.sampleFailedRolledBack')
                   : t('profileForm.toast.sampleFailedDescription'),
@@ -745,9 +783,10 @@ export function ProfileForm() {
       setEditingProfileId(null);
       setOpen(false);
     } catch (error) {
+      console.error('Profile save failed:', error);
       toast({
         title: t('common.error'),
-        description: error instanceof Error ? error.message : t('profileForm.toast.saveFailed'),
+        description: getErrorMessage(error, t('profileForm.toast.saveFailed')),
         variant: 'destructive',
       });
     }

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useToast } from '@/components/ui/use-toast';
 import { apiClient } from '@/lib/api/client';
 import type { GenerationResponse, HistoryListResponse } from '@/lib/api/types';
+import { useGenerationSettings } from '@/lib/hooks/useSettings';
 import { useGenerationStore } from '@/stores/generationStore';
 import { usePlayerStore } from '@/stores/playerStore';
 
@@ -12,6 +13,12 @@ interface GenerationStatusEvent {
   duration?: number;
   error?: string;
   source?: string;
+}
+
+function normalizeStatus(
+  status: GenerationStatusEvent['status'],
+): GenerationResponse['status'] {
+  return status === 'not_found' ? 'failed' : status;
 }
 
 // Agent-initiated generations are played by the floating pill, not the
@@ -33,6 +40,56 @@ export function useGenerationProgress() {
   const setAudioWithAutoPlay = usePlayerStore((s) => s.setAudioWithAutoPlay);
   const { settings: genSettings } = useGenerationSettings();
   const autoplayOnGenerate = genSettings?.autoplay_on_generate ?? true;
+
+  const patchGenerationStatusInCache = useCallback(
+    (event: GenerationStatusEvent) => {
+      // Keep history list rows in sync immediately while background refetch catches up.
+      queryClient.setQueriesData<HistoryListResponse>(
+        { queryKey: ['history'] },
+        (prev) => {
+          if (!prev) return prev;
+
+          let touched = false;
+          const items = prev.items.map((item) => {
+            if (item.id !== event.id) return item;
+            touched = true;
+            const nextStatus = normalizeStatus(event.status);
+            return {
+              ...item,
+              status: nextStatus,
+              duration: event.duration ?? item.duration,
+              error:
+                nextStatus === 'failed'
+                  ? event.error || item.error
+                  : nextStatus === 'completed'
+                    ? undefined
+                    : item.error,
+            };
+          });
+
+          return touched ? { ...prev, items } : prev;
+        },
+      );
+
+      // Also patch generation detail query (['history', id]) when present.
+      queryClient.setQueryData<GenerationResponse>(['history', event.id], (prev) => {
+        if (!prev) return prev;
+        const nextStatus = normalizeStatus(event.status);
+        return {
+          ...prev,
+          status: nextStatus,
+          duration: event.duration ?? prev.duration,
+          error:
+            nextStatus === 'failed'
+              ? event.error || prev.error
+              : nextStatus === 'completed'
+                ? undefined
+                : prev.error,
+        };
+      });
+    },
+    [queryClient],
+  );
 
   // Keep refs to avoid stale closures in EventSource handlers
   const isPlayingRef = useRef(isPlaying);

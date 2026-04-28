@@ -2,10 +2,11 @@ import { Link, useMatchRoute } from "@tanstack/react-router";
 import {
   AudioLines,
   Box,
+  Captions,
   FileText,
+  type LucideIcon,
   Mic,
   Settings,
-  Speaker,
   Volume2,
   Wand2,
 } from "lucide-react";

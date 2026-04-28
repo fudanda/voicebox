@@ -184,8 +184,19 @@ async def add_profile_sample(
         )
         return sample
     except ValueError as e:
+        logger.warning(
+            "Voice clone sample rejected: profile_id=%s filename=%s reason=%s",
+            profile_id,
+            file.filename,
+            e,
+        )
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.exception(
+            "Voice clone sample processing failed: profile_id=%s filename=%s",
+            profile_id,
+            file.filename,
+        )
         raise HTTPException(status_code=500, detail=f"Failed to process audio file: {str(e)}")
     finally:
         Path(tmp_path).unlink(missing_ok=True)

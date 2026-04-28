@@ -53,17 +53,61 @@ import type {
   MCPClientBindingUpsert,
 } from './types';
 
-function formatErrorDetail(detail: unknown, fallback: string): string {
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail)) {
-    return detail
-      .map((e: Record<string, unknown>) => e.msg || e.message || JSON.stringify(e))
-      .join('; ');
+function collectErrorMessages(
+  value: unknown,
+  bucket: string[],
+  seen: Set<string>,
+  depth = 0,
+): void {
+  if (depth > 6 || value == null) return;
+
+  if (typeof value === 'string') {
+    const message = value.trim();
+    if (!message || seen.has(message)) return;
+    seen.add(message);
+    bucket.push(message);
+    return;
   }
-  if (detail && typeof detail === 'object') {
-    const obj = detail as Record<string, unknown>;
-    if (typeof obj.message === 'string') return obj.message;
-    return JSON.stringify(detail);
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectErrorMessages(item, bucket, seen, depth + 1);
+    }
+    return;
+  }
+
+  if (typeof value !== 'object') return;
+
+  const record = value as Record<string, unknown>;
+  const priorityKeys = [
+    'detail',
+    'reason',
+    'message',
+    'error',
+    'msg',
+    'description',
+    'debug',
+    'details',
+  ] as const;
+
+  for (const key of priorityKeys) {
+    if (key in record) {
+      collectErrorMessages(record[key], bucket, seen, depth + 1);
+    }
+  }
+
+  for (const [key, nested] of Object.entries(record)) {
+    if (priorityKeys.includes(key as (typeof priorityKeys)[number])) continue;
+    collectErrorMessages(nested, bucket, seen, depth + 1);
+  }
+}
+
+function formatErrorDetail(detail: unknown, fallback: string): string {
+  const messages: string[] = [];
+  collectErrorMessages(detail, messages, new Set<string>());
+
+  if (messages.length > 0) {
+    return messages.join(' | ');
   }
   return fallback;
 }
@@ -88,7 +132,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.json();
@@ -162,7 +206,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.json();
@@ -196,7 +240,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.blob();
@@ -216,7 +260,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.json();
@@ -236,7 +280,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.json();
@@ -332,7 +376,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.blob();
@@ -346,7 +390,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.blob();
@@ -372,7 +416,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.json();
@@ -438,7 +482,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.json();
@@ -511,7 +555,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.json();
@@ -548,7 +592,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
     return response.json();
   }
@@ -913,7 +957,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.blob();
@@ -1010,7 +1054,7 @@ class ApiClient {
       const error = await response.json().catch(() => ({
         detail: response.statusText,
       }));
-      throw new Error(formatErrorDetail(error.detail, `HTTP error! status: ${response.status}`));
+      throw new Error(formatErrorDetail(error, `HTTP error! status: ${response.status}`));
     }
 
     return response.blob();
