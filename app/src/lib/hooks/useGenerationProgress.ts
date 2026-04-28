@@ -5,27 +5,18 @@ import { apiClient } from '@/lib/api/client';
 import type { GenerationResponse, HistoryListResponse } from '@/lib/api/types';
 import { useGenerationStore } from '@/stores/generationStore';
 import { usePlayerStore } from '@/stores/playerStore';
-import { useServerStore } from '@/stores/serverStore';
 
 interface GenerationStatusEvent {
   id: string;
   status: 'loading_model' | 'generating' | 'completed' | 'failed' | 'not_found';
   duration?: number;
   error?: string;
+  source?: string;
 }
 
-function patchGenerationEntry<T extends { id: string; status: string; duration?: number; error?: string }>(
-  entry: T,
-  data: GenerationStatusEvent,
-): T {
-  if (entry.id !== data.id) return entry;
-  return {
-    ...entry,
-    status: data.status === 'not_found' ? entry.status : data.status,
-    duration: data.duration ?? entry.duration,
-    error: data.error ?? (data.status === 'completed' ? undefined : entry.error),
-  };
-}
+// Agent-initiated generations are played by the floating pill, not the
+// main-window AudioPlayer. Skip autoplay here to avoid double-playback.
+const AGENT_SOURCES = new Set(['mcp', 'rest']);
 
 /**
  * Subscribes to SSE for all pending generations. When a generation completes,
@@ -40,34 +31,8 @@ export function useGenerationProgress() {
   const removePendingStoryAdd = useGenerationStore((s) => s.removePendingStoryAdd);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const setAudioWithAutoPlay = usePlayerStore((s) => s.setAudioWithAutoPlay);
-  const autoplayOnGenerate = useServerStore((s) => s.autoplayOnGenerate);
-
-  const patchGenerationStatusInCache = useCallback((data: GenerationStatusEvent) => {
-    queryClient.setQueriesData({ queryKey: ['history'] }, (oldData: unknown) => {
-      if (!oldData || typeof oldData !== 'object') {
-        return oldData;
-      }
-
-      const maybeList = oldData as Partial<HistoryListResponse>;
-      if (Array.isArray(maybeList.items)) {
-        let changed = false;
-        const nextItems = maybeList.items.map((item) => {
-          if (item.id !== data.id) return item;
-          changed = true;
-          return patchGenerationEntry(item, data);
-        });
-        return changed ? { ...maybeList, items: nextItems } : oldData;
-      }
-
-      const maybeDetail = oldData as Partial<GenerationResponse>;
-      if (typeof maybeDetail.id === 'string' && typeof maybeDetail.status === 'string') {
-        if (maybeDetail.id !== data.id) return oldData;
-        return patchGenerationEntry(maybeDetail as GenerationResponse, data);
-      }
-
-      return oldData;
-    });
-  }, [queryClient]);
+  const { settings: genSettings } = useGenerationSettings();
+  const autoplayOnGenerate = genSettings?.autoplay_on_generate ?? true;
 
   // Keep refs to avoid stale closures in EventSource handlers
   const isPlayingRef = useRef(isPlaying);
@@ -151,8 +116,11 @@ export function useGenerationProgress() {
               // });
             }
 
-            // Auto-play if enabled and nothing is currently playing
-            if (autoplayRef.current && !isPlayingRef.current) {
+            // Auto-play if enabled and nothing is currently playing.
+            // Skip agent-initiated sources — the floating pill window
+            // plays those itself.
+            const isAgentSpeak = data.source ? AGENT_SOURCES.has(data.source) : false;
+            if (autoplayRef.current && !isPlayingRef.current && !isAgentSpeak) {
               const genAudioUrl = apiClient.getAudioUrl(id);
               setAudioWithAutoPlay(genAudioUrl, id, '', '');
             }
